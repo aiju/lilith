@@ -1,0 +1,34 @@
+OFILES=\
+	dat.cmo\
+	symbol.cmo\
+	grapheval.cmo\
+	LALR.cmo\
+	main.cmo\
+
+IFILES=\
+	symbol.mli\
+	grapheval.mli\
+	LALR.mli\
+
+MLFILES=${OFILES:%.cmo=%.ml}
+
+TARG=serpent
+
+all:V: depend $TARG
+
+depend:V:
+	ocamldep $MLFILES $IFILES > .depend
+
+$TARG: $OFILES
+	ocamlc -o $target $prereq
+
+%.cmo: %.ml
+	ocamlc -c $stem.ml
+
+%.cmi: %.mli
+	ocamlc -c $stem.mli
+
+clean:V:
+	rm -f *.cmi *.cmo
+
+<.depend
