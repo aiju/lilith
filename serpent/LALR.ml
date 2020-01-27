@@ -7,11 +7,11 @@ type rule = {
 	rhs: Symbol.t list;
 	prec: (int * assoctype) option;
 	idx: int;
-	action: string option
+	code: fragment list option
 }
 
 module Ss = Set.Make(Symbol)
-let endSym = Symbol.get("$end")
+let endSym = Symbol.get("TEOF")
 let startSym = Symbol.get("$accept")
 type item = Item of int * Symbol.t * Symbol.t list * Symbol.t list
 type state = State of {
@@ -30,7 +30,9 @@ type t = {
 	mutable nullable: (Symbol.t, bool) H.t;
 	mutable first: (Symbol.t, Ss.t) H.t;
 	mutable follow: (Symbol.t, Ss.t) H.t;
-	mutable actions: (int * Symbol.t, action) H.t
+	actions: (int * Symbol.t, action) H.t;
+	goto: (int * Symbol.t, int) H.t;
+	start: Symbol.t
 }
 let isNonterminal g t = H.mem g.rules t
 let isTerminal g t = not (isNonterminal g t)
@@ -220,17 +222,17 @@ let calcLALR g =
 		| _ -> ()
 	) h
 
-let shiftreduce g state token shift (idx,lhs,rhs) =
+let shiftreduce g state token shift (idx,lhs,rhs,act) =
 	let {prec=ruleprec} = match H.find_all g.rules lhs |> List.filter (fun {idx=idx'} -> idx=idx') with
 		| [t] -> t
 		| _ -> assert false in
 	let tokenprec = H.find_opt g.prectab token in
 	match ruleprec, tokenprec with
 	| None, _ | _, None ->
-		H.add g.actions (state, token) (Reduce (idx,lhs,rhs))
+		H.add g.actions (state, token) (Reduce (idx,lhs,rhs,act))
 	| Some(l, _), Some(l', _) when l < l' -> H.replace g.actions (state, token) (Shift shift)
-	| Some(l, _), Some(l', _) when l > l' -> H.replace g.actions (state, token) (Reduce(idx,lhs,rhs))
-	| Some(_, Left), _ -> H.replace g.actions (state, token) (Reduce(idx, lhs, rhs))
+	| Some(l, _), Some(l', _) when l > l' -> H.replace g.actions (state, token) (Reduce(idx,lhs,rhs,act))
+	| Some(_, Left), _ -> H.replace g.actions (state, token) (Reduce(idx, lhs, rhs, act))
 	| Some(_, Right), _ -> H.replace g.actions (state, token) (Shift shift)
 	| Some(_, Nonassoc), _ -> H.replace g.actions (state, token) Error
 
@@ -239,39 +241,53 @@ let findconflicts g =
 	g.actions |> H.iter (fun (id, e) a ->
 		H.find_all g.actions (id,e) |> List.iter (fun a' ->
 			match (a,a') with
-			| Shift n, Reduce (idx,_,_) -> H.add sr id (e, n, idx)
-			| Reduce(idx,_,_), Reduce(idx',_,_) when idx < idx' -> H.add rr id (e, idx, idx')
+			| Shift n, Reduce (idx,_,_,_) -> H.add sr id (e, n, idx)
+			| Reduce(idx,_,_,_), Reduce(idx',_,_,_) when idx < idx' -> H.add rr id (e, idx, idx')
 			| _ -> ()
 		)
 	);
 	(sr, rr)
+
+let getCode g idx lhs =
+	match H.find_all g.rules lhs |> List.filter (fun {idx=idx'} -> idx=idx') with
+	| [{code}] -> code
+	| _ -> assert false
 
 let genTables g =
 	Array.iter (fun (State{id;edges;reduce}) ->
 		H.iter (fun e (State{id=id'}) ->
 			if e = endSym then
 				H.replace g.actions (id, e) Accept
+			else if isTerminal g e then
+				H.replace g.actions (id, e) (Shift id')
 			else
-				H.replace g.actions (id, e) (if isTerminal g e then Shift id' else Goto id')
+				H.replace g.goto (id, e) id'
 		) edges;
 		H.iter (fun e (idx,lhs,rhs) ->
+			let code = getCode g idx lhs in
 			match H.find_opt g.actions (id, e) with
-			| Some (Shift n) -> shiftreduce g id e n (idx,lhs,rhs)
-			| _ -> H.add g.actions (id, e) (Reduce (idx,lhs,rhs))
+			| Some (Shift n) -> shiftreduce g id e n (idx,lhs,rhs,code)
+			| _ -> H.add g.actions (id, e) (Reduce (idx,lhs,rhs,code))
 		) reduce
 	) g.states;
 	let (sr, rr) = findconflicts g in
 	Format.printf "%d shift/reduce, %d reduce/reduce@\n%!" (H.length sr) (H.length rr)
+
+let actions g = H.copy g.actions
+let goto g = H.copy g.goto
+let terminals g = g.terminals
+let nonterminals g = g.nonterminals
+let start g = g.start
 	
 let create rules' prectab start =
 	let rules = H.create 0 in
-	H.add rules startSym {idx=0; lhs=startSym; rhs=[start; endSym]; prec=None; action=None};
+	H.add rules startSym {idx=0; lhs=startSym; rhs=[start; endSym]; prec=None; code=None};
 	List.iter (fun r -> H.add rules r.lhs r) rules';
 	let nonterminals = hkeys rules in
-	let terminals = H.fold (fun _ {rhs=b} c -> List.fold_left (fun c x ->
+	let terminals = List.sort_uniq compare (H.fold (fun _ {rhs=b} c -> List.fold_left (fun c x ->
 		if not (H.mem rules x) then
-			List.merge compare [x] c
-		else c) c b) rules [] in
+			x::c
+		else c) c b) rules []) in
 	let g = {
 		rules;
 		states=[||];
@@ -282,7 +298,9 @@ let create rules' prectab start =
 		follow=H.create 0;
 		nullable=H.create 0;
 		actions=H.create 0;
-		prectab
+		goto=H.create 0;
+		prectab;
+		start
 	} in
 	calcNullable g;
 	calcFirstFollow g;
@@ -328,12 +346,14 @@ let printStates f g =
 			| _ -> c) g.actions [] |> List.sort compare) @
 		(H.fold (fun (s, e) a c ->
 			match a with
-			| Reduce(idx,_,_) when s=id -> [Symbol.name e; "  reduce " ^ (string_of_int idx)] :: c
+			| Reduce(idx,_,_,_) when s=id -> [Symbol.name e; "  reduce " ^ (string_of_int idx)] :: c
 			| _ -> c) g.actions [] |> List.sort compare)
-		and b = (H.fold (fun (s, e) a c ->
-			match a with
-			| Goto(s') when s=id -> [Symbol.name e; "  goto " ^ (string_of_int s')] :: c
-			| _ -> c) g.actions [] |> List.sort compare) in
+		and b = (H.fold (fun (s, e) s' c ->
+			if s = id then
+				[Symbol.name e; "  goto " ^ (string_of_int s')] :: c
+			else
+				c
+		) g.goto [] |> List.sort compare) in
 		let c = a @ (if a <> [] && b <> [] then [["";""]] else []) @ b in
 		tabulate "\t" "@\n" c;
 		Format.fprintf f "@\n@\n"

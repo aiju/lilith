@@ -4,15 +4,30 @@ open Dat
 
 let tryoption x def = match x with Some n -> n | None -> def
 
+let ifname = ref ""
 let lineno = ref 1
+let footer = ref ""
 
 let error s = 
 	Format.eprintf "%d: %s@\n%!" !lineno s;
 	exit 1
 
 let quote s = Printf.sprintf "%S" s
+
+let cs str c = str ^ (String.make 1 c)
+let rec fragstr fs =
+	match fs with
+	| [] -> ""
+	| Piece(s)::t -> s^(fragstr t)
+	| Var(i)::t -> (Format.sprintf "$%d" i)^(fragstr t)
+	| Line(_,_)::t -> fragstr t
+let fragchar fs c = match fs with
+	| Piece s::t -> Piece (cs s c)::t
+	| _ -> (Piece (String.make 1 c))::fs
+
 type token =
-	EOF | ID of Symbol.t | VAR of Symbol.t | LITERAL of string | DIRECTIVE of string | ACTION of string
+	EOF | ID of Symbol.t | VAR of Symbol.t | LITERAL of string | DIRECTIVE of string | CODE of fragment list | CODEBLOCK of string
+	| TYPE of string
 	| EQUAL | LPAREN | RPAREN | COMMA | COLON | PIPE | SEMICOLON
 let tokstr t = match t with
 	| EOF -> "eof"
@@ -27,9 +42,10 @@ let tokstr t = match t with
 	| RPAREN -> ")"
 	| COMMA -> ","
 	| SEMICOLON -> ";"
-	| ACTION(s) -> "{" ^ s ^ "}"
+	| CODE(s) -> "{" ^ (fragstr s) ^ "}"
+	| TYPE(s) -> "<" ^ s ^ ">"
+	| CODEBLOCK(s) -> "%{" ^ s ^ "%}"
 
-let cs str c = str ^ (String.make 1 c)
 let noeof fn = try fn () with Stream.Failure -> error "unexpected eof"
 let rec lex s =
 	match S.next s with
@@ -40,9 +56,11 @@ let rec lex s =
 	| '=' -> EQUAL
 	| 'a'..'z' | 'A'..'Z' | '_' | '\x80'..'\xff' as c -> ident s (cs "" c) (fun x -> ID(x))
 	| '"' -> noeof(fun() -> literal s "")
+	| '%' when S.peek s = Some '{' -> (S.junk s; codeblock s "") 
 	| '%' -> directive s "%"
 	| '$' -> ident s "" (fun x -> VAR(x))
-	| '{' -> noeof(fun() -> action s "" 0)
+	| '{' -> noeof(fun() -> CODE(List.rev (code s [Line (!ifname, !lineno)])))
+	| '<' -> noeof(fun() -> l_type s "")
 	| '(' -> LPAREN
 	| ')' -> RPAREN
 	| ',' -> COMMA
@@ -57,30 +75,54 @@ and literal s str =
 	| '"' -> LITERAL str
 	| '\n' -> error "newline in string"
 	| c -> literal s (cs str c)
+and l_type s str =
+	match S.next s with
+	| '>' -> TYPE str
+	| '\n' -> error "newline in type"
+	| c -> l_type s (cs str c)
 and directive s str =
 	match S.peek s with
 	| Some(' '|'\t'|'\n') -> DIRECTIVE str
 	| _ -> directive s (cs str (S.next s))
-and action s str n =
+and code s frags =
 	let c = S.next s in match c with
-	| '\n' -> lineno := !lineno + 1; action s (cs str c) n
-	| '{' -> action s (cs str c) (n+1)
-	| '}' -> if n == 0 then ACTION(str) else action s (cs str c) (n-1) 
-	| '"' | '\'' -> action_string s (cs str c) n c
-	| '(' when S.peek s = Some '*' -> S.junk s; action_comment s (str^"(*") n
-	| c -> action s (cs str c) n
-and action_string s str n term =
+	| '\n' -> lineno := !lineno + 1; code s (fragchar frags c)
+	| '{' -> let frags' = code s (fragchar frags '{') in code s (fragchar frags' '}')
+	| '}' -> frags
+	| '"' | '\'' -> let str' = code_string s (String.make 1 c) c in code s (Piece str' :: frags)
+	| '(' when S.peek s = Some '*' ->
+		S.junk s;
+		let str' = code_comment s "(*"
+		in code s (Piece str' :: frags)
+	| '$' -> code s (code_var s "" :: frags)
+	| c -> code s (fragchar frags c)
+and code_var s str =
+	match S.peek s with
+	| Some('0'..'9') -> code_var s (cs str (S.next s))
+	| _ -> Var(int_of_string str)
+and code_string s str term =
 	let c = S.next s in match c with
-	| '\n' -> lineno := !lineno + 1; action_string s (cs str c) n term
-	| '\\' -> action_string s (cs (cs str c) (S.next s)) n term
-	| x when x=term -> action s (cs str c) n
-	| c -> action_string s (cs str c) n term
-and action_comment s str n =
+	| '\n' -> lineno := !lineno + 1; code_string s (cs str c) term
+	| '\\' -> code_string s (cs (cs str c) (S.next s)) term
+	| x when x=term -> cs str c
+	| c -> code_string s (cs str c) term
+and code_comment s str =
 	let c = S.next s in match c with
-	| '*' when S.peek s = Some ')' -> S.junk s; action s (str^"*)") n
-	| '\n' -> lineno := !lineno + 1; action_comment s (cs str c) n
-	| c -> action_comment s (cs str c) n
-	
+	| '*' when S.peek s = Some ')' -> S.junk s; str^"*)"
+	| '\n' -> lineno := !lineno + 1; code_comment s (cs str c)
+	| c -> code_comment s (cs str c)
+and codeblock s str =
+	let c = S.next s in match c with
+	| '\n' -> lineno := !lineno + 1; codeblock s (cs str c)
+	| '%' when S.peek s = Some '}' -> S.junk s; CODEBLOCK(str)
+	| '"' | '\'' -> let str' = code_string s (cs str c) c in codeblock s str'
+	| '(' when S.peek s = Some '*' -> S.junk s; let str' = code_comment s (str^"(*") in codeblock s str'
+	| c -> codeblock s (cs str c)
+
+
+let copyRest s =
+	let rec f str = try f (cs str (S.next s)) with Stream.Failure -> str
+	in f ""
 
 module Ss = Set.Make(Symbol)
 type expr =
@@ -91,7 +133,7 @@ type expr =
 	| Seq of expr list
 	| Alt of expr list
 	| Prec of Symbol.t
-	| Action of string
+	| Code of fragment list
 
 let head e = match e with
 	| Sym s -> s
@@ -100,29 +142,33 @@ let head e = match e with
 
 type grammar = {
 	mutable terminals: Ss.t;
-	mutable nonterminals: Ss.t;
 	literals: (string, Symbol.t) H.t;
 	prec: (Symbol.t, int * assoctype) H.t;
-	mutable rules: (expr * expr) list;
+	types: (Symbol.t, string) H.t;
+	rules: (Symbol.t, expr * expr * int) H.t;
 	macros: (Symbol.t, expr * expr) H.t;
 	mutable genrules: LALR.rule list;
-	mutable start: Symbol.t
+	mutable start: Symbol.t option;
+	mutable stackout: (expr, bool) H.t
 }
 
 let newGrammar () = {
 	terminals=Ss.empty;
-	nonterminals=Ss.empty;
 	literals=H.create 0;
+	types=H.create 0;
 	prec=H.create 0;
-	rules=[];
+	rules=H.create 0;
 	macros=H.create 0;
 	genrules=[];
-	start=Symbol.get "$"
+	start=None;
+	stackout=H.create 0
 }
 
 let parse s g =
 	let colon = ref None in
 	let preclevel = ref 0 in
+	let dtype = ref None in
+	let ruleidx = ref 0 in
 	let expect_id () = match S.next s with
 		| ID(t) -> t
 		| t -> error ("expected identifier, got "^(tokstr t))
@@ -134,7 +180,10 @@ let parse s g =
 		| t -> error ("expected directive, got "^(tokstr t))
 	and expect_literal () = match S.next s with
 		| LITERAL(t) -> t
-		| t -> error ("expected literal, got"^(tokstr t))
+		| t -> error ("expected literal, got "^(tokstr t))
+	and expect_type () = match S.next s with
+		| TYPE(t) -> t
+		| t -> error ("expected type, got "^(tokstr t))
 	and expect tok = 
 		let t = S.next s in
 		if t <> tok then error ("syntax error, got "^(tokstr t)^", expected "^(tokstr tok))
@@ -153,7 +202,11 @@ let parse s g =
 					error ("literal "^(quote l)^" redefined");
 				H.add g.literals l t
 			);
+			(match !dtype with
+			| Some ty -> H.add g.types t ty
+			| None -> ());
 			p_deftokens ()
+		| TYPE(_) -> dtype := Some (expect_type ()); p_deftokens ()
 		| _ -> p_header ()
 	and p_assoc assoc level =
 		match peek () with
@@ -175,12 +228,24 @@ let parse s g =
 				| None -> H.add g.prec t (level,assoc)));
 			p_assoc assoc level
 		| _ -> p_header ()
+	and p_type () =
+		match peek () with
+		| ID(_) ->
+			let t = expect_id () in
+			(match !dtype with
+			| Some ty -> H.add g.types t ty
+			| None -> error "%type without <type>");
+			p_type ()
+		| TYPE(_) -> dtype := Some (expect_type ()); p_type ()
+		| _ -> p_header ()
 	and p_header () =
+		dtype := None;
 		match expect_directive () with
 		| "%token" -> p_deftokens ()
 		| "%left" -> incr preclevel; p_assoc Left (!preclevel)
 		| "%right" -> incr preclevel; p_assoc Right (!preclevel)
 		| "%nonassoc" -> incr preclevel; p_assoc Nonassoc (!preclevel)
+		| "%type" -> p_type ();
 		| "%%" -> ()
 		| s -> error ("unknown directive "^s)
 	and p_lexpr () =
@@ -209,8 +274,14 @@ let parse s g =
 		expect COLON;
 		if got EQUAL then
 			H.add g.macros (head lhs) (lhs, p_rexpr ())
-		else
-			g.rules <- (lhs, p_rexpr ()) :: g.rules;
+		else (
+			H.add g.rules (head lhs) (lhs, p_rexpr (), !ruleidx);
+			incr ruleidx;
+			if g.start = None then
+				match lhs with
+				| Sym v -> g.start <- Some v
+				| _ -> error "invalid start rule"
+		);
 		ignore (got SEMICOLON)
 	and p_rexpr () = let e = ref (p_seq ()) in while got PIPE do e := Alt[!e; p_seq ()] done; !e
 	and p_seq () =
@@ -224,20 +295,25 @@ let parse s g =
 			if peek() = COLON then (
 				colon := Some(r);
 				None
-			) else Some(r)
-		| LPAREN -> S.junk s; let r = p_rexpr () in expect RPAREN; Some(r)
+			) else
+				Some(r)
+		| LPAREN ->
+			S.junk s;
+			let r = p_rexpr () in
+			expect RPAREN;
+			Some(r)
 		| DIRECTIVE("%prec") -> S.junk s; Some(Prec(expect_id ()))
-		| ACTION(str) -> S.junk s; Some(Action(str))
+		| CODE(str) -> S.junk s; Some(Code(str))
 		| t -> None
 	and p_rules () =
-		if got EOF then ()
-		else (
+		match peek () with
+		| EOF -> ()
+		| CODEBLOCK(str) -> S.junk s; footer := !footer ^ str
+		| _ ->
 			p_rule();
 			p_rules()
-		)
 	in p_header ();
-	p_rules ();
-	g.rules <- List.rev g.rules
+	p_rules ()
 
 let rec canonize a =
 	match a with
@@ -249,7 +325,7 @@ let rec canonize a =
 		let l' = l |> List.map canonize
 		|> List.map (fun x -> match x with Seq l' -> l' |  _ -> [x]) |> List.concat
 		in (match l' with [x] -> x | _ -> Seq l')
-	| Sym(_) | Var(_) | Literal(_) | Prec(_) | Action(_) -> a
+	| Sym(_) | Var(_) | Literal(_) | Prec(_) | Code(_) -> a
 	| ParamSym(t, p) -> ParamSym(t, List.map canonize p)
 let rec exprMatch scope a b =
 	match (a,b) with
@@ -286,7 +362,7 @@ let rec exprSub g scope e =
 	| ParamSym(t, p) -> macro (ParamSym(t, List.map (exprSub g scope) p))
 	| Alt(l) -> Alt(List.map (exprSub g scope) l)
 	| Seq(l) -> Seq(List.map (exprSub g scope) l)
-	| Prec _ | Action _ -> e
+	| Prec _ | Code _ -> e
 and exprToString e =
 	let callString (t,p) = 
 		let p' = List.map exprToString p in
@@ -300,20 +376,26 @@ and exprToString e =
 	| Seq(p) -> callString("$seq", p)
 	| Alt(p) -> callString("$alt", p)
 	| Prec(p) -> callString("$prec", [Sym(p)])
-	| Action(a) -> assert false
+	| Code(a) -> Format.sprintf "$code({%s})" (fragstr a)
 let exprToSym e = Symbol.get (exprToString e)
 
 let rec exprExpand e =
 	match e with
 	| Seq l ->
-		let l' = List.map exprExpand l in
+		let l' = List.map (fun x -> canonize (exprExpand x)) l in
 		let rec f left right = match right with
 			| [] -> Seq (List.rev left)
 			| Alt k::right' -> Alt (List.map (fun x -> Seq [f left []; x; f [] right']) k)
 			| x::right' -> f (x::left) right'
 		in f [] l'
 	| Alt l -> Alt (List.map exprExpand l)
-	| Sym _ | Var _ | Literal _ | ParamSym(_, _) | Prec _ | Action _ -> e
+	| Sym _ | Var _ | Literal _ | ParamSym(_, _) | Prec _ | Code _ -> e
+
+let rec exprUses e =
+	match e with
+	| Sym _ | ParamSym(_, _) | Var _ | Literal _ -> [e]
+	| Prec _ | Code _ -> []
+	| Alt l | Seq l -> List.map exprUses l |> List.concat
 
 let rec ruleprec g rhs =
 	match rhs with
@@ -322,88 +404,172 @@ let rec ruleprec g rhs =
 		| None -> ruleprec g t
 		| Some p -> Some p
 
-let generateRules g =
+let expandRules g start =
 	let seen = H.create 0 in
-	let idx = ref 1 in
 	Ss.iter (fun x -> H.add seen (Sym x) ()) g.terminals;
+	let result = ref [] in
 	let rec f qu =
 		let qu' = ref [] in
-		let addRule lhs rhs prec action =
-			let rhs' = List.map exprToSym rhs in
-			g.genrules <- {
-				lhs=exprToSym lhs;
-				idx= !idx;
-				rhs=rhs';
-				prec=(match prec with
-					| Some s -> (match H.find_opt g.prec s with
-						| None -> error ("precedence for "^(Symbol.name s)^" undefined")
-						| Some p -> Some p)
-					| None -> ruleprec g (List.rev rhs'));
-				action
-			}::g.genrules;
-			incr idx;
-			rhs |> List.iter (fun x ->
-				if not (H.mem seen x) then (
-					H.replace seen x ();
-					qu' := x::!qu'
-				)
-			)
-		in let rec processRule prefix lhs rhs =
-			match rhs with
-			| Alt(l) -> List.iter (processRule prefix lhs) l
-			| Seq(l) ->
-				let prec = ref None in
-				let action = ref None in
-				let rec proc_rhs rhs = match rhs with
-					| [] -> []
-					| ((Sym _ | ParamSym(_, _)) as h)::t -> h::proc_rhs t
-					| [Action(a)] -> action := Some(a); []
-					| Action(a)::t ->
-						let s' = Sym (Symbol.temp prefix) in
-						processRule prefix s' (Action(a));
-						H.add seen s' ();
-						s'::proc_rhs t
-					| Prec(p)::t ->
-						if !prec = None then (
-							prec := Some p;
-							proc_rhs t
-						) else
-							error ("precedence of rule "^(exprToString lhs)^" redefined")
-					| (Var _ | Literal _ | Seq _ | Alt _)::_ -> assert false
-				in let rhs' = proc_rhs l in
-				addRule lhs rhs' !prec !action
-			| _ -> processRule prefix lhs (Seq([rhs]))
-		in qu |> List.iter (fun p ->
+		qu |> List.iter (fun p ->
 			let found = ref false in
-			g.rules |> List.iter (fun (lhs,rhs) ->
+			H.find_all g.rules (head p) |> List.iter (fun (lhs,rhs,idx) ->
 				let scope = H.create 0 in
 				if exprMatch scope (canonize lhs) (canonize p) then (
 					found := true;
 					let lhs' = canonize (exprSub g scope lhs) and
 					rhs' = canonize (exprExpand (exprSub g scope rhs)) in
-					processRule (exprToString lhs' ^ "$") lhs' rhs'
+					exprUses rhs' |> List.iter (fun e ->
+						if not (H.mem seen e) then (
+							H.add seen e ();
+							qu' := e :: !qu'
+						)
+					);
+					result := (idx, lhs', rhs')::!result
 				)
 			);
 			if not !found then 
 				error ("undefined "^(exprToString p));
 		);
-		if !qu' <> [] then f !qu'
-	in match (List.hd g.rules) with (lhs,_) ->
-		(match lhs with
-		| Sym(s) -> g.start <- s
-		| _ -> error "invalid start rule");
-		H.replace seen lhs ();
-		f [lhs]
+		if !qu' <> [] then
+			f !qu'
+	in H.replace seen (Sym start) ();
+	f [Sym start];
+	List.sort compare !result
+
+let rec exprHasCode e =
+	match e with
+	| Sym _ | Var _ | ParamSym(_, _) | Literal _ | Prec _ -> false
+	| Code _ -> true
+	| Alt l | Seq l -> List.exists exprHasCode l
+
+let checkStack g lhs rhs =
+	let rec cmp a b =
+		if a <> b then
+			error ("inconsistent stack use in definition of "^(exprToString lhs))
+	and calcOut e =
+		match e with
+		| Sym _ | ParamSym(_, _) -> H.find g.stackout e
+		| Code _ -> true
+		| Prec _ -> false
+		| Var _ | Literal _ -> assert false
+		| Seq l -> List.exists calcOut l
+		| Alt l ->
+			let l' = List.map calcOut l in
+			if l' <> [] then (
+				List.iter (cmp (List.hd l')) (List.tl l');
+				List.hd l'
+			)else
+				false
+	in cmp (calcOut rhs) (H.find g.stackout lhs)
+
+let calcStack g list =
+	let graph = Grapheval.create (||) in
+	list |> List.iter (fun (_,lhs,rhs) -> Grapheval.node graph lhs ((H.mem g.types (head lhs)) || (exprHasCode rhs)));
+	g.terminals |> Ss.iter (fun t -> Grapheval.node graph (Sym t) (H.mem g.types t));
+	let rec exprProc lhs e =
+		match e with
+		| Sym _ | ParamSym(_, _) -> Grapheval.edge graph e lhs
+		| Literal _ | Var _ | Prec _ | Code _ -> ()
+		| Alt l | Seq l -> List.iter (exprProc lhs) l
+	in list |> List.iter (fun (_,lhs,rhs) -> exprProc lhs rhs);
+	let h = Grapheval.eval graph in
+	g.stackout <- h;
+	list |> List.iter (fun (_,lhs,rhs) -> checkStack g lhs rhs);
+	list
+
+let rec varmap inputs frags =
+	match frags with
+	| [] -> []
+	| Dat.Var v::t ->
+		if v < 1 || v > List.length inputs then
+			error ("variable $"^(string_of_int v)^" out of range");
+		(List.nth inputs (v-1))::varmap inputs t
+	| h::t -> h::varmap inputs t
+
+let combineCodes lhs inputs codes =
+	let c' = (List.rev codes |> List.mapi (fun i c ->
+		[Piece ("let _c"^(string_of_int (i+1))^" = (\n")]@c@[Piece ") in "]
+	) |> List.concat) in
+	match List.rev inputs with
+	| [] -> None
+	| [i] -> Some (c'@[i])
+	| Piece _ as p::_ -> Some (c'@[p])
+	| _ -> error ("action required for "^(exprToString lhs))
+
+let generateRules g list =
+	let idx = ref 1 in
+	let addRule lhs rhs prec code =
+		let rhs' = List.map exprToSym rhs in
+		g.genrules <- {
+			lhs=exprToSym lhs;
+			idx= !idx;
+			rhs=rhs';
+			prec=(match prec with
+				| Some s -> (match H.find_opt g.prec s with
+					| None -> error ("precedence for "^(Symbol.name s)^" undefined")
+					| Some p -> Some p)
+				| None -> ruleprec g (List.rev rhs'));
+			code
+		}::g.genrules;
+		incr idx;
+	in let rec processRule prefix lhs rhs =
+		match rhs with
+		| Alt(l) -> List.iter (processRule prefix lhs) l
+		| Seq(l) ->
+			let prec = ref None in
+			let stackidx = ref 0 in
+			let inputs = ref [] in
+			let codes = ref [] in
+			let rec proc_rhs rhs = match rhs with
+				| [] -> []
+				| ((Sym _ | ParamSym(_, _)) as h)::t ->
+					incr stackidx;
+					if H.find g.stackout h then
+						inputs := !inputs @ [Dat.Var !stackidx];
+					h::proc_rhs t
+				| Code(a)::t ->
+					codes := (varmap !inputs a)::!codes;
+					inputs := !inputs  @ [Piece ("_c"^(string_of_int (List.length !codes)))];
+					proc_rhs t
+				| Prec(p)::t ->
+					if !prec = None then (
+						prec := Some p;
+						proc_rhs t
+					) else
+						error ("precedence of rule "^(exprToString lhs)^" redefined")
+				| (Var _ | Literal _ | Seq _ | Alt _)::_ -> assert false
+			in let rhs' = proc_rhs l in
+			addRule lhs rhs' !prec (combineCodes lhs !inputs !codes)
+		| _ -> processRule prefix lhs (Seq([rhs]))
+	in list |> List.iter (fun (_, lhs, rhs) -> processRule ((exprToString lhs)^"$") lhs rhs)
 
 let _ =
 	(if Array.length Sys.argv < 2 then (Printf.eprintf "usage: %s file\n%!" Sys.argv.(0); exit 1));
+	let fname = Sys.argv.(1) in
+	ifname := fname;
+	let base =
+		(if Filename.check_suffix fname ".ss" then
+			Filename.chop_suffix fname ".ss"
+		else
+			fname) |> Filename.basename in
 	let f = S.of_channel (open_in Sys.argv.(1)) in
 	let toks = S.from (fun _ -> Some (try lex f with Stream.Failure -> EOF)) in
 	let g = newGrammar () in
 	parse toks g;
-	generateRules g;
-	let lalr = LALR.create g.genrules g.prec g.start in
-	LALR.printStates Format.std_formatter lalr
+	let start = match g.start with Some x -> x | _ -> error "no rules" in
+	expandRules g start |> calcStack g |> generateRules g;
+	let lalr = LALR.create g.genrules g.prec start in
+	LALR.printStates (Format.formatter_of_out_channel (open_out "serpent.output")) lalr;
+	let mlname = base ^ "_gen.ml" in
+	let ml = Format.formatter_of_out_channel (open_out mlname) in
+	Gen.gen_ml mlname ml lalr (Ss.elements g.terminals) g.types;
+	Format.fprintf ml "@\n%s@\n" !footer;
+	Format.pp_print_flush ml ();
+	let mli = Format.formatter_of_out_channel (open_out (base ^ "_gen.mli")) in
+	Gen.gen_mli mli lalr (Ss.elements g.terminals) g.types;
+	Format.pp_print_flush mli ()
+
+
 
 
 

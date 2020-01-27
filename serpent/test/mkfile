@@ -1,0 +1,51 @@
+</$objtype/mkfile
+
+TESTS=\
+	calc.pass\
+	pre.pass\
+	altcalc.pass\
+
+all:V: $TESTS
+
+%.pass:D: $O.% %.ss
+	for(i in $stem.input.*){
+		out=`{echo $i | sed 's/input\.([0-9]*)$/output.\1/'}
+		diff <{$O.$stem < $i >[2=1]} $out
+	}
+	touch $stem.pass
+
+$O.%: %_gen.cmo %_lex.cmo %_ml.cmo
+	ocamlc -o $O.$stem $stem^_gen.cmo $stem^_lex.cmo $stem^_ml.cmo
+
+%.cmo: %.ml
+	ocamlc -c $stem.ml
+
+%.cmi: %.mli
+	ocamlc -c $stem.mli
+
+%_gen.cmo: %_gen.cmi
+%_lex.cmo: %_gen.cmi
+%_ml.cmo: %_lex.cmo %_gen.cmi
+
+%_gen.ml %_gen.mli: %.ss ../serpent
+	../serpent $stem.ss
+
+%_lex.ml: %.mll
+	ocamllex -o $stem^_lex.ml $stem.mll
+
+%.ss %.mll %_ml.ml: %.test
+	awk '
+		/### SERPENT ###/ { output = "'$stem'.ss"; printf "" > output; next }
+		/### LEX ###/ { output = "'$stem'.mll"; printf "" > output; next }
+		/### ML ###/ { output = "'$stem'_ml.ml"; printf "" > output; next }
+		/### INPUT ###/ { output = "'$stem'.input." (++INPUTN); printf "" > output; next }
+		/### OUTPUT ###/ { output = "'$stem'.output." (++OUTPUTN); printf "" > output; next }
+		/###/ { output = ""; next }
+		{ if(output) print > output }
+	' $stem.test
+
+clean:V:
+	rm -f *_gen.^(ml mli) *_lex.ml *.cmi *.cmo *.^(input output)^.* *.ss *.mll *.pass *_ml.ml $O.*
+
+
+

@@ -1,0 +1,58 @@
+### SERPENT ###
+%token
+	TPLUS="+"
+	TMINUS="-"
+	TMUL="*"
+	TDIV="/"
+	TEXP="**"
+	TLPAREN="("
+	TRPAREN=")"
+	TCOMMA=","
+	TNL
+
+%token <float> TNUM
+
+%type <unit> program
+
+%%
+
+program: list(TNUM) optional(",") { List.iter (Format.printf "%g;") $1 }
+
+list($X):
+	$X { [$1] }
+	| list($X) "," $X { $1 @ [$2] }
+
+optional($X) := $X |
+
+### LEX ###
+{
+	open Pre_gen
+}
+
+rule token = parse
+	[' ' '\t' '\n'] { token lexbuf }
+	| ['0'-'9']+ as s { TNUM(float_of_string s) }
+	| '+' { TPLUS }
+	| '-' { TMINUS }
+	| '/' { TDIV }
+	| '*' '*' { TEXP }
+	| '*' { TMUL }
+	| '(' { TLPAREN }
+	| ')' { TRPAREN }
+	| ',' { TCOMMA }
+	| eof { TEOF }
+
+### ML ###
+let _ = 
+	try Pre_gen.parse Pre_lex.token (Lexing.from_channel stdin)
+	with Pre_gen.ParseError -> Format.printf "no@\n%!"
+
+### INPUT ###
+1,2,3,4
+### OUTPUT ###
+1;2;3;4;
+### INPUT ###
+1,2,
+### OUTPUT ###
+1;2;
+### END ###

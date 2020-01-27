@@ -1,0 +1,79 @@
+### SERPENT ###
+%token
+	TPLUS="+"
+	TMINUS="-"
+	TMUL="*"
+	TDIV="/"
+	TEXP="**"
+	TLPAREN="("
+	TRPAREN=")"
+	TNL
+	UMINUS
+
+%token <float> TNUM
+
+%type <unit> program
+
+%left "+" "-"
+%left "*" "/"
+%nonassoc UMINUS
+%right "**"
+
+%%
+
+program: { }
+	| program TNL { }
+	| program expr TNL { Format.printf "%g@\n" $2 }
+
+expr:
+	TNUM { $1 }
+	| expr op expr { $2 $1 $3 }
+	| "(" expr ")" { $1 }
+	| "-" expr %prec UMINUS { -. $1 }
+
+op :=
+	"+" { ( +. ) }
+	| "-" { ( -. ) }
+	| "*" { ( *. ) }
+	| "/" { ( /. ) }
+	| "**" { ( ** ) }
+
+
+### LEX ###
+{
+	open Altcalc_gen
+}
+
+rule token = parse
+	[' ' '\t'] { token lexbuf }
+	| '\n' { TNL }
+	| ['0'-'9']+ as s { TNUM(float_of_string s) }
+	| '+' { TPLUS }
+	| '-' { TMINUS }
+	| '/' { TDIV }
+	| '*' '*' { TEXP }
+	| '*' { TMUL }
+	| '(' { TLPAREN }
+	| ')' { TRPAREN }
+	| eof { TEOF }
+
+### ML ###
+let _ = 
+	try Altcalc_gen.parse Altcalc_lex.token (Lexing.from_channel stdin)
+	with Altcalc_gen.ParseError -> Format.printf "no@\n%!"
+
+### INPUT ###
+1 + 2 * 3
+(1 + 2) * 3
+- 1 ** 2
+2**2**3
+### OUTPUT ###
+7
+9
+-1
+256
+### INPUT ###
+1 2 +
+### OUTPUT ###
+no
+### END ###

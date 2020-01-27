@@ -23,5 +23,6 @@ let temp s =
 	in f 0
 
 let name id = (!nametab).(id)
+let id id = id
 let pp f n = Format.fprintf f "%s" (name n)
 let compare = compare

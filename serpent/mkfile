@@ -3,12 +3,14 @@ OFILES=\
 	symbol.cmo\
 	grapheval.cmo\
 	LALR.cmo\
+	gen.cmo\
 	main.cmo\
 
 IFILES=\
 	symbol.mli\
 	grapheval.mli\
 	LALR.mli\
+	gen.mli\
 
 MLFILES=${OFILES:%.cmo=%.ml}
 
@@ -19,14 +21,17 @@ all:V: depend $TARG
 depend:V:
 	ocamldep $MLFILES $IFILES > .depend
 
+test:V: $TARG
+	@{cd test; mk}
+
 $TARG: $OFILES
-	ocamlc -o $target $prereq
+	ocamlc -g -o $target $prereq
 
 %.cmo: %.ml
-	ocamlc -c $stem.ml
+	ocamlc -g -c $stem.ml
 
 %.cmi: %.mli
-	ocamlc -c $stem.mli
+	ocamlc -g -c $stem.mli
 
 clean:V:
 	rm -f *.cmi *.cmo

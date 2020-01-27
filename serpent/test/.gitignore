@@ -1,0 +1,9 @@
+*.ss
+*_gen.ml
+*_gen.mli
+*.mll
+*_lex.ml
+*_ml.ml
+*.input.*
+*.output.*
+*.pass

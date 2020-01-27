@@ -5,10 +5,17 @@ type rule = {
 	rhs: Symbol.t list;
 	prec: (int * Dat.assoctype) option;
 	idx: int;
-	action: string option
+	code: Dat.fragment list option
 }
 
 val startSym : Symbol.t
 val endSym : Symbol.t
 val create : rule list -> (Symbol.t, int * Dat.assoctype) Hashtbl.t -> Symbol.t -> t
+
+val actions : t -> (int * Symbol.t, Dat.action) Hashtbl.t
+val goto : t -> (int * Symbol.t, int) Hashtbl.t
+val terminals : t -> Symbol.t list
+val nonterminals : t -> Symbol.t list
+val start : t -> Symbol.t
+
 val printStates : Format.formatter -> t -> unit
