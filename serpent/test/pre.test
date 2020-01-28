@@ -16,13 +16,13 @@
 
 %%
 
-program: list(TNUM) optional(",") { List.iter (Format.printf "%g;") $1 }
+program: list(TNUM) optional(TNUM) { List.iter (Format.printf "%g;") $1; match $2 with Some x -> Format.printf "%g" x | None -> () }
 
 list($X):
 	$X { [$1] }
 	| list($X) "," $X { $1 @ [$2] }
 
-optional($X) := $X |
+optional($X) := $X { Some $1 } | { None }
 
 ### LEX ###
 {
@@ -53,7 +53,7 @@ let _ =
 ### OUTPUT ###
 1;2;3;4;
 ### INPUT ###
-1,2,
+1,2 3
 ### OUTPUT ###
-1;2;
+1;2;3
 ### END ###

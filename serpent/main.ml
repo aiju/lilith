@@ -65,6 +65,7 @@ let rec lex s =
 	| ')' -> RPAREN
 	| ',' -> COMMA
 	| ';' -> SEMICOLON
+	| '/' when S.peek s = Some '/' -> (S.junk s; comment s)
 	| _ -> error "unexpected character"
 and ident s str res =
 	match S.peek s with
@@ -118,6 +119,10 @@ and codeblock s str =
 	| '"' | '\'' -> let str' = code_string s (cs str c) c in codeblock s str'
 	| '(' when S.peek s = Some '*' -> S.junk s; let str' = code_comment s (str^"(*") in codeblock s str'
 	| c -> codeblock s (cs str c)
+and comment s =
+	match S.peek s with
+	| Some '\n' -> lex s
+	| _ -> S.junk s; comment s
 
 
 let copyRest s =
@@ -134,6 +139,7 @@ type expr =
 	| Alt of expr list
 	| Prec of Symbol.t
 	| Code of fragment list
+	| ExMacro of expr
 
 let head e = match e with
 	| Sym s -> s
@@ -327,6 +333,7 @@ let rec canonize a =
 		in (match l' with [x] -> x | _ -> Seq l')
 	| Sym(_) | Var(_) | Literal(_) | Prec(_) | Code(_) -> a
 	| ParamSym(t, p) -> ParamSym(t, List.map canonize p)
+	| ExMacro x -> ExMacro (canonize x)
 let rec exprMatch scope a b =
 	match (a,b) with
 	| Sym(t), Sym(t') -> t = t'
@@ -338,6 +345,7 @@ let rec exprMatch scope a b =
 		| Some e -> exprMatch scope b e)
 	| Literal(l), Literal(l') -> l = l'
 	| Alt(l), Alt(l') | Seq(l), Seq(l') -> List.length l = List.length l' && List.for_all2 (exprMatch scope) l l'
+	| ExMacro(l), ExMacro(l') -> exprMatch scope l l'
 	| _ -> false
 let rec exprSub g scope e =
 	let macro e =
@@ -347,7 +355,7 @@ let rec exprSub g scope e =
 			| (lhs,rhs)::t ->
 				let scope' = H.create 0 in
 				if exprMatch scope' (canonize lhs) (canonize e) then
-					exprSub g scope' rhs
+					ExMacro(exprSub g scope' rhs)
 				else
 					f t
 		in f (List.rev (H.find_all g.macros (head e)))
@@ -362,6 +370,7 @@ let rec exprSub g scope e =
 	| ParamSym(t, p) -> macro (ParamSym(t, List.map (exprSub g scope) p))
 	| Alt(l) -> Alt(List.map (exprSub g scope) l)
 	| Seq(l) -> Seq(List.map (exprSub g scope) l)
+	| ExMacro l -> ExMacro (exprSub g scope l)
 	| Prec _ | Code _ -> e
 and exprToString e =
 	let callString (t,p) = 
@@ -377,6 +386,7 @@ and exprToString e =
 	| Alt(p) -> callString("$alt", p)
 	| Prec(p) -> callString("$prec", [Sym(p)])
 	| Code(a) -> Format.sprintf "$code({%s})" (fragstr a)
+	| ExMacro(a) -> callString("$ex", [a])
 let exprToSym e = Symbol.get (exprToString e)
 
 let rec exprExpand e =
@@ -390,12 +400,22 @@ let rec exprExpand e =
 		in f [] l'
 	| Alt l -> Alt (List.map exprExpand l)
 	| Sym _ | Var _ | Literal _ | ParamSym(_, _) | Prec _ | Code _ -> e
+	| ExMacro x ->
+		match canonize (exprExpand x) with
+		| Alt l -> Alt (List.map (fun y -> ExMacro y) l)
+		| x' -> ExMacro x'
+
+let rec deseq x =
+	match x with
+	| Seq l -> (List.map deseq l) |> List.concat
+	| _ -> [x]
 
 let rec exprUses e =
 	match e with
 	| Sym _ | ParamSym(_, _) | Var _ | Literal _ -> [e]
 	| Prec _ | Code _ -> []
 	| Alt l | Seq l -> List.map exprUses l |> List.concat
+	| ExMacro x -> exprUses x
 
 let rec ruleprec g rhs =
 	match rhs with
@@ -441,6 +461,7 @@ let rec exprHasCode e =
 	| Sym _ | Var _ | ParamSym(_, _) | Literal _ | Prec _ -> false
 	| Code _ -> true
 	| Alt l | Seq l -> List.exists exprHasCode l
+	| ExMacro l -> exprHasCode l
 
 let checkStack g lhs rhs =
 	let rec cmp a b =
@@ -460,6 +481,7 @@ let checkStack g lhs rhs =
 				List.hd l'
 			)else
 				false
+		| ExMacro l -> calcOut l
 	in cmp (calcOut rhs) (H.find g.stackout lhs)
 
 let calcStack g list =
@@ -471,6 +493,7 @@ let calcStack g list =
 		| Sym _ | ParamSym(_, _) -> Grapheval.edge graph e lhs
 		| Literal _ | Var _ | Prec _ | Code _ -> ()
 		| Alt l | Seq l -> List.iter (exprProc lhs) l
+		| ExMacro l -> exprProc lhs l
 	in list |> List.iter (fun (_,lhs,rhs) -> exprProc lhs rhs);
 	let h = Grapheval.eval graph in
 	g.stackout <- h;
@@ -511,37 +534,53 @@ let generateRules g list =
 				| None -> ruleprec g (List.rev rhs'));
 			code
 		}::g.genrules;
-		incr idx;
-	in let rec processRule prefix lhs rhs =
+		incr idx;		
+	in let rec stackTranslate lhs rhs stackidx prec =
+		let inputs = ref [] in
+		let codes = ref [] in
+		let rec proc_rhs rhs =
+			match rhs with
+			| [] -> []
+			| ((Sym _ | ParamSym(_, _)) as h)::t ->
+				incr stackidx;
+				if H.find g.stackout h then
+					inputs := !inputs @ [Dat.Var !stackidx];
+				h::proc_rhs t
+			| Code(a)::t ->
+				codes := (varmap !inputs a)::!codes;
+				inputs := !inputs  @ [Piece ("_c"^(string_of_int (List.length !codes)))];
+				proc_rhs t
+			| Prec(p)::t ->
+				(match prec with
+				| None -> error ("can't define precedence for macro")
+				| Some r ->
+					if !r = None then (
+						r := Some p;
+						proc_rhs t
+					) else
+						error ("precedence of rule "^(exprToString lhs)^" redefined"))
+			| ExMacro(x)::t ->
+				let (r, c) = stackTranslate lhs (deseq x) stackidx None in
+				(match c with
+				| None -> ()
+				| Some c' ->
+					codes := c'::!codes;
+					inputs := !inputs  @ [Piece ("_c"^(string_of_int (List.length !codes)))]);
+				r @ proc_rhs t
+			| (Var _ | Literal _ | Seq _ | Alt _)::_ -> assert false
+		in let r = proc_rhs rhs in
+		(r, combineCodes lhs !inputs !codes)
+	in let rec processRule lhs rhs =
+		Format.printf "%s %s\n%!" (exprToString lhs) (exprToString rhs);
 		match rhs with
-		| Alt(l) -> List.iter (processRule prefix lhs) l
+		| Alt(l) -> List.iter (processRule lhs) l
 		| Seq(l) ->
 			let prec = ref None in
 			let stackidx = ref 0 in
-			let inputs = ref [] in
-			let codes = ref [] in
-			let rec proc_rhs rhs = match rhs with
-				| [] -> []
-				| ((Sym _ | ParamSym(_, _)) as h)::t ->
-					incr stackidx;
-					if H.find g.stackout h then
-						inputs := !inputs @ [Dat.Var !stackidx];
-					h::proc_rhs t
-				| Code(a)::t ->
-					codes := (varmap !inputs a)::!codes;
-					inputs := !inputs  @ [Piece ("_c"^(string_of_int (List.length !codes)))];
-					proc_rhs t
-				| Prec(p)::t ->
-					if !prec = None then (
-						prec := Some p;
-						proc_rhs t
-					) else
-						error ("precedence of rule "^(exprToString lhs)^" redefined")
-				| (Var _ | Literal _ | Seq _ | Alt _)::_ -> assert false
-			in let rhs' = proc_rhs l in
-			addRule lhs rhs' !prec (combineCodes lhs !inputs !codes)
-		| _ -> processRule prefix lhs (Seq([rhs]))
-	in list |> List.iter (fun (_, lhs, rhs) -> processRule ((exprToString lhs)^"$") lhs rhs)
+			let (r, c) = stackTranslate lhs l stackidx (Some prec) in
+			addRule lhs r !prec c
+		| _ -> processRule lhs (Seq([rhs]))
+	in list |> List.iter (fun (_, lhs, rhs) -> processRule lhs rhs)
 
 let _ =
 	(if Array.length Sys.argv < 2 then (Printf.eprintf "usage: %s file\n%!" Sys.argv.(0); exit 1));
