@@ -571,7 +571,6 @@ let generateRules g list =
 		in let r = proc_rhs rhs in
 		(r, combineCodes lhs !inputs !codes)
 	in let rec processRule lhs rhs =
-		Format.printf "%s %s\n%!" (exprToString lhs) (exprToString rhs);
 		match rhs with
 		| Alt(l) -> List.iter (processRule lhs) l
 		| Seq(l) ->
