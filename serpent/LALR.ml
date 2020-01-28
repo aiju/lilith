@@ -35,26 +35,47 @@ type t = {
 let isNonterminal g t = H.mem g.rules t
 let isTerminal g t = not (isNonterminal g t)
 
+let deoption def o = match o with Some x -> x | None -> def
+let hmodify t k def f =
+	match H.find_opt t k with
+	| None -> H.replace t k (f def)
+	| Some x -> H.replace t k (f x)
+let hkeys t =
+	let l = ref [] in
+	H.iter (fun x _ -> l := x::!l) t;
+	List.sort_uniq compare !l
+
 let calcNullable g =
-	let rhslook = H.create 0 in
-	let nullable = H.create 0 in
-	List.iter (fun x -> H.replace nullable x false) (List.rev_append g.nonterminals g.terminals);
+	let watchlist = H.create 0 in
 	let qu = ref [] in
-	H.iter (fun lhs {rhs} ->
-		List.iter (fun x -> H.add rhslook x (lhs,rhs)) rhs;
-		if rhs = [] then qu := (lhs,rhs)::!qu;
-	) g.rules;
-	let rec nullableLoop l =
-		let l' = ref [] in
-		List.iter (fun (lhs,rhs) ->
-			if List.for_all (H.find nullable) rhs then (
-				H.replace nullable lhs true;
-				l' := List.rev_append (H.find_all rhslook lhs) !l' 
-			)
-		) l;
-		if !l' <> [] then nullableLoop !l'
-	in nullableLoop !qu;
-	g.nullable <- nullable
+	List.iter (fun x -> H.replace g.nullable x false) (List.rev_append g.nonterminals g.terminals);
+	g.rules |> H.iter (fun lhs {rhs} ->
+		match rhs with
+		| head::tail -> 
+			if List.for_all (fun x -> H.mem g.rules x) rhs then
+				hmodify watchlist head [] (fun l -> (lhs,tail)::l)
+		| [] -> qu := lhs::!qu
+	);
+	while !qu <> [] do
+		match !qu with [] -> () | h::t ->
+		qu := t;
+		H.replace g.nullable h true;
+		let l = deoption [] (H.find_opt watchlist h) in
+		H.remove watchlist h;
+		l |> List.iter (fun (lhs,rhs) ->
+			if not (H.find g.nullable lhs) then (
+				let rec f l =
+					match l with
+					| [] -> qu := lhs :: !qu
+					| h::t ->
+						if H.find g.nullable h then
+							f t
+						else
+							hmodify watchlist h [] (fun l -> (lhs,t)::l)
+				in f rhs
+			)		
+		)
+	done
 
 let rec closure g i n =
 	let n' = ref [] in
@@ -71,16 +92,6 @@ let rec closure g i n =
 		| _ -> ()) n;
 	if !n' <> [] then
 		closure g i !n'
-
-let deoption def o = match o with Some x -> x | None -> def
-let hmodify t k def f =
-	match H.find_opt t k with
-	| None -> H.replace t k (f def)
-	| Some x -> H.replace t k (f x)
-let hkeys t =
-	let l = ref [] in
-	H.iter (fun x _ -> l := x::!l) t;
-	List.sort_uniq compare !l
 
 let rec getState g l =
 	let hset = H.create 0 in
@@ -280,9 +291,9 @@ let printStates f g =
 	let (sr, rr) = findconflicts g in
 	Array.iter (fun (State{id;set;reduce}) ->
 		H.find_all sr id |> List.iter (fun (a,b,c) ->
-				Format.printf "%d: shift/reduce conflict on %a (shift %d, reduce %d)@\n" id Symbol.pp a b c);
+				Format.fprintf f "%d: shift/reduce conflict on %a (shift %d, reduce %d)@\n" id Symbol.pp a b c);
 		H.find_all rr id |> List.iter (fun (a,b,c) ->
-				Format.printf "%d: reduce/reduce conflict on %a (shift %d, reduce %d)@\n" id Symbol.pp a b c);
+				Format.fprintf f "%d: reduce/reduce conflict on %a (reduce %d, reduce %d)@\n" id Symbol.pp a b c);
 		Format.fprintf f "State %d@\n" id;
 		List.map (fun (Item(idx,lhs,left,right)) ->
 			[Symbol.name lhs;

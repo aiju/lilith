@@ -568,8 +568,3 @@ let _ =
 	let mli = Format.formatter_of_out_channel (open_out (base ^ "_gen.mli")) in
 	Gen.gen_mli mli lalr (Ss.elements g.terminals) g.types;
 	Format.pp_print_flush mli ()
-
-
-
-
-
