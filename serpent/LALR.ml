@@ -28,8 +28,6 @@ type t = {
 	mutable states: state array;
 	statetab: (item list, int) H.t;
 	mutable nullable: (Symbol.t, bool) H.t;
-	mutable first: (Symbol.t, Ss.t) H.t;
-	mutable follow: (Symbol.t, Ss.t) H.t;
 	actions: (int * Symbol.t, action) H.t;
 	goto: (int * Symbol.t, int) H.t;
 	start: Symbol.t
@@ -57,47 +55,6 @@ let calcNullable g =
 		if !l' <> [] then nullableLoop !l'
 	in nullableLoop !qu;
 	g.nullable <- nullable
-
-type firstfollow = First of Symbol.t | Follow of Symbol.t
-let calcFirstFollow g =
-	let graph = G.create Ss.union in
-	List.iter (fun x ->
-		G.node graph (First x) (Ss.add x Ss.empty);
-		G.node graph (Follow x) Ss.empty
-	) g.terminals;
-	List.iter (fun x ->
-		G.node graph (First x) Ss.empty;
-		G.node graph (Follow x) Ss.empty
-	) g.nonterminals;
-	H.iter (fun lhs {rhs} ->
-		let rec f l f' = match l with [] -> ()
-			| y::t ->
-				f' y lhs;
-				if H.find g.nullable y then
-					f t f'
-		in f rhs (fun y lhs -> G.edge graph (First y) (First lhs));
-		f (List.rev rhs) (fun y lhs -> G.edge graph (Follow lhs) (Follow y));
-		let rec f l = match l with [] -> () | y::t -> f' y t; f t
-		and f' y l = match l with [] -> () | y'::t' ->
-			G.edge graph (First y') (Follow y);
-			if H.find g.nullable y' then
-				f' y t'
-		in f rhs
-	) g.rules;
-	let first = H.create 0 and follow = H.create 0 in
-	H.iter (fun x y -> match x with
-		| First n -> H.add first n y
-		| Follow n -> H.add follow n y
-	) (G.eval graph);
-	g.first <- first;
-	g.follow <- follow
-
-let rec first g l = match l with [] -> Ss.empty | h::t ->
-	let f = H.find g.first h in
-	if H.find g.nullable h then
-		Ss.union f (first g t)
-	else
-		f
 
 let rec closure g i n =
 	let n' = ref [] in
@@ -294,8 +251,6 @@ let create rules' prectab start =
 		statetab=H.create 0;
 		nonterminals;
 		terminals;
-		first=H.create 0;
-		follow=H.create 0;
 		nullable=H.create 0;
 		actions=H.create 0;
 		goto=H.create 0;
@@ -303,7 +258,6 @@ let create rules' prectab start =
 		start
 	} in
 	calcNullable g;
-	calcFirstFollow g;
 	ignore (getState g [Item(0, startSym, [], [start; endSym])]);
 	calcLALR g;
 	genTables g;

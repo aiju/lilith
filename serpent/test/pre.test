@@ -44,8 +44,9 @@ rule token = parse
 
 ### ML ###
 let _ = 
-	try Pre_gen.parse Pre_lex.token (Lexing.from_channel stdin)
-	with Pre_gen.ParseError -> Format.printf "no@\n%!"
+	Pre_gen.parse Pre_lex.token (Lexing.from_channel stdin) (fun _ s ->
+		Format.printf "%s\n" s;
+		exit 1)
 
 ### INPUT ###
 1,2,3,4

@@ -9,9 +9,21 @@ type state = {
 let fn_header =
 "exception ParseError
 
-let parse lex buf =
-	let gotostack = ref [] in
-	let exprstack = ref [] in
+type range = Lexing.position * Lexing.position
+let merge (p1,p2) (p1',p2') = (p1,p2')
+type state = {
+	fn: unit -> unit;
+	goto: nonterminal -> state;
+	follow: string list
+}
+type stackel = {
+	state: state;
+	expr: Obj.t;
+	pos: range
+}
+
+let parse lex buf errorfn =
+	let stack = ref [] in
 	let peeked = ref None in
 	let rec next () =
 		match !peeked with
@@ -21,24 +33,18 @@ let parse lex buf =
 		match !peeked with
 		| Some x -> x
 		| None -> let s = lex buf in peeked := Some s; s
-	and shift g s e =
-		ignore (next ());
-		exprstack := e :: !exprstack;
-		gotostack := g :: !gotostack;
-		s ()
-	and push e = exprstack := e::!exprstack;
-	and pop () = match !exprstack with
-		| h::t -> exprstack := t; h
-		| _ -> assert false
-	and reduce n lhs =
-		match n with
-		| 0 -> (List.hd !gotostack) lhs
-		| _ -> gotostack := List.tl !gotostack; reduce (n-1) lhs
-	and accept () = Obj.obj(pop ())
-	and error () = raise ParseError
+	and accept () = match !stack with {expr}::_ -> Obj.obj(expr) | _ -> assert false
+	and error tok follow =
+		(if follow = [] then
+			Format.sprintf \"syntax error, got %s\" (token_show tok)
+		else
+			(Format.sprintf \"syntax error, got %s, expected one of \" (token_show tok)) ^
+			(List.fold_left (fun a b -> a ^ \" \" ^ b) (List.hd follow) (List.tl follow))
+		) |> errorfn (Lexing.lexeme_start_p buf, Lexing.lexeme_end_p buf);
+		assert false
 "
 let fn_footer =
-"	in gotostack := [goto0]; state0 ()
+"	in stack := [{state=state0; expr=Obj.repr(()); pos=(Lexing.dummy_pos, Lexing.dummy_pos)}]; statefn0 ()
 "
 
 let ntab = H.create 0
@@ -58,7 +64,7 @@ let nonterminal s =
 	trys fixed
 
 let printState f i st types restore_line =
-	Format.fprintf f "\tand state%d () =@\n" i;
+	Format.fprintf f "\tand statefn%d () =@\n" i;
 	Format.fprintf f "\t\tmatch peek () with@\n";
 	H.iter (fun e a ->
 		if H.mem types e then
@@ -66,39 +72,57 @@ let printState f i st types restore_line =
 		else
 			Format.fprintf f "\t\t| %a -> let _arg = () in " Symbol.pp e;
 		match a with
-		| Shift(n) -> Format.fprintf f "shift goto%d state%d (Obj.repr(_arg))@\n" n n
+		| Shift(n) ->
+			Format.fprintf f "@\n\t\t\tlet pos = (Lexing.lexeme_start_p buf, Lexing.lexeme_end_p buf) in@\n";
+			Format.fprintf f "\t\t\tlet state' = {state=state%d; expr=(Obj.repr(_arg)); pos} in@\n" n;
+			Format.fprintf f "\t\t\t\tignore (next ()); stack := state' :: !stack; statefn%d ()\n" n
 		| Reduce(_,lhs,rhs,code) ->
-			Format.fprintf f "@\n";
+			Format.fprintf f "(match !stack with@\n\t\t\t";
 			let n = List.length rhs in
+			List.rev rhs |> List.iteri (fun i x ->
+				Format.fprintf f "_S%d::" (n-i)
+			);
+			Format.fprintf f "({state={goto}}::_ as rest) ->@\n";
 			List.rev rhs |> List.iteri (fun i x ->
 				match H.find_opt types x with
 				| Some t ->
-					Format.fprintf f "\t\t\tlet _%d : %s = Obj.obj(pop ()) in\n" (n-i) t
-				| _ -> 
-					Format.fprintf f "\t\t\tignore (pop ());@\n"
+					Format.fprintf f "\t\t\t\tlet _%d : %s = Obj.obj _S%d.expr in@\n" (n-i) t (n-i)
+				| _ ->  ()
 			);
-			Format.fprintf f "\t\t\tpush (Obj.repr (@\n";
+			Format.fprintf f "\t\t\t\tlet expr = Obj.repr (";
 			(match code with
 			| None -> if n = 1 then Format.fprintf f "_1"
 			| Some l -> List.iter (fun frag ->
 					match frag with
 					| Piece s -> Format.pp_print_string f s
 					| Var n -> Format.fprintf f "_%d" n
-					| Line (s,n) -> Format.fprintf f "# %d \"%s\"@\n" n s
+					| Line (s,n) -> Format.fprintf f "@\n# %d \"%s\"@\n" n s
 				) l;
 				Format.fprintf f "@\n";
 				restore_line ());
-			Format.fprintf f "\t\t\t));@\n";
-			Format.fprintf f "\t\t\treduce %d NT_%s@\n" (List.length rhs) (nonterminal lhs);
+			if n <> 0 then
+				Format.fprintf f "\t\t\t\t) in let pos = merge _S1.pos _S%d.pos@\n" n
+			else
+				Format.fprintf f "\t\t\t\t) in let pos = (Lexing.lexeme_end_p buf, Lexing.lexeme_end_p buf)@\n";				
+			Format.fprintf f "\t\t\t\tin let state' = goto NT_%s in@\n" (nonterminal lhs);
+			Format.fprintf f "\t\t\t\tstack := {state=state'; expr; pos}::rest; state'.fn ()@\n";
+			Format.fprintf f "\t\t\t| _ -> assert false)@\n"
 		| Accept -> Format.fprintf f "accept ()@\n"
-		| Error -> Format.fprintf f "error ()@\n"
+		| Error -> Format.fprintf f "error (peek()) state%d.follow@\n" i
 	) st.action;
-	Format.fprintf f "\t\t| _ -> error ()@\n";
-	Format.fprintf f "\tand goto%d e =@\n" i;
-	Format.fprintf f "\t\tmatch e with@\n";
+	Format.fprintf f "| _ -> error (peek()) state%d.follow@\n" i;
+	Format.fprintf f "\tand goto%d nt =@\n" i;
+	Format.fprintf f "\t\tmatch nt with@\n";
 	H.iter (fun e s' ->
-		Format.fprintf f "\t\t| NT_%s -> gotostack := goto%d :: !gotostack; state%d ()\n" (nonterminal e) s' s') st.goto;
-	Format.fprintf f "\t\t| _ -> assert false@\n"
+		Format.fprintf f "\t\t| NT_%s -> state%d\n" (nonterminal e) s') st.goto;
+	Format.fprintf f "\t\t| _ -> assert false@\n";
+	Format.fprintf f "\tand state%d = {fn=statefn%d; goto=goto%d; follow=List.sort_uniq compare [" i i i;
+	H.iter (fun e a ->
+		match a with
+		| Error -> ()
+		| _ -> Format.fprintf f "\"%a\";" Symbol.pp e
+	) st.action;
+	Format.fprintf f "]}@\n"
 
 let gen_ml name f lalr terminals types =
 	let nlctr = ref 1 in
@@ -125,7 +149,14 @@ let gen_ml name f lalr terminals types =
 		| Some x -> Format.fprintf f "\t| %a of %s@\n" Symbol.pp s x
 		| None -> Format.fprintf f "\t| %a@\n" Symbol.pp s
 	);
-	Format.fprintf f "type nonterminals = @\n";
+	Format.fprintf f "let token_show t = match t with\n";
+	(LALR.endSym::terminals) |> List.iter (fun s ->
+		match H.find_opt types s with
+		| Some x -> Format.fprintf f "\t| %a(_) -> \"%a\"@\n" Symbol.pp s Symbol.pp s
+		| None -> Format.fprintf f "\t| %a -> \"%a\"@\n" Symbol.pp s Symbol.pp s
+	);
+	
+	Format.fprintf f "type nonterminal = @\n";
 	LALR.nonterminals lalr |> List.iter (fun s ->
 		Format.fprintf f "\t| NT_%s@\n" (nonterminal s)
 	);
@@ -145,4 +176,4 @@ let gen_mli f lalr terminals types =
 		| None -> Format.fprintf f "\t| %a@\n" Symbol.pp s
 	);
 	Format.fprintf f "@\nexception ParseError@\n";
-	Format.fprintf f "@\nval parse : (Lexing.lexbuf -> token) -> Lexing.lexbuf -> %s@\n" (H.find types (LALR.start lalr))
+	Format.fprintf f "@\nval parse : (Lexing.lexbuf -> token) -> Lexing.lexbuf -> (Lexing.position * Lexing.position -> string -> unit) -> %s@\n" (H.find types (LALR.start lalr))

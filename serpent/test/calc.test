@@ -55,8 +55,9 @@ rule token = parse
 
 ### ML ###
 let _ = 
-	try Calc_gen.parse Calc_lex.token (Lexing.from_channel stdin)
-	with Calc_gen.ParseError -> Format.printf "no@\n%!"
+	Calc_gen.parse Calc_lex.token (Lexing.from_channel stdin) (fun _ s ->
+		Format.printf "%s\n" s;
+		exit 1)
 
 ### INPUT ###
 1 + 2 * 3
@@ -71,5 +72,5 @@ let _ =
 ### INPUT ###
 1 2 +
 ### OUTPUT ###
-no
+syntax error, got TNUM, expected one of TDIV TEXP TMINUS TMUL TNL TPLUS TRPAREN
 ### END ###
