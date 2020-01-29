@@ -6,6 +6,7 @@ let tryoption x def = match x with Some n -> n | None -> def
 
 let ifname = ref ""
 let lineno = ref 1
+let header = ref ""
 let footer = ref ""
 
 let error s = 
@@ -195,7 +196,11 @@ let parse s g =
 		if t <> tok then error ("syntax error, got "^(tokstr t)^", expected "^(tokstr tok))
 	and got tok = if S.peek s = Some tok then (S.junk s; true) else false
 	and peek () = match (S.peek s) with Some x -> x | None -> assert false
-	in let rec p_deftokens () =
+	in let rec p_header_block () = 
+		match peek () with
+		| CODEBLOCK(str) -> S.junk s; header := str
+		| _ -> ()
+	and p_deftokens () =
 		match peek () with
 		| ID(_) ->
 			let t = expect_id () in
@@ -318,7 +323,8 @@ let parse s g =
 		| _ ->
 			p_rule();
 			p_rules()
-	in p_header ();
+	in p_header_block ();
+	p_header ();
 	p_rules ()
 
 let rec canonize a =
@@ -600,6 +606,7 @@ let _ =
 	LALR.printStates (Format.formatter_of_out_channel (open_out "serpent.output")) lalr;
 	let mlname = base ^ "_gen.ml" in
 	let ml = Format.formatter_of_out_channel (open_out mlname) in
+	Format.fprintf ml "%s@\n" !header;
 	Gen.gen_ml mlname ml lalr (Ss.elements g.terminals) g.types;
 	Format.fprintf ml "@\n%s@\n" !footer;
 	Format.pp_print_flush ml ();
