@@ -1,0 +1,41 @@
+OFILES=\
+	util.cmo\
+	symbol.cmo\
+	lexer.cmo\
+	ast.cmo\
+	parse_gen.cmo\
+	semant.cmo\
+	main.cmo\
+
+IFILES=\
+	parse_gen.mli\
+
+MLFILES=${OFILES:%.cmo=%.ml}
+
+
+TARG=eva
+
+all:V: $TARG
+
+$TARG: $OFILES
+	ocamlc -o $target $prereq
+
+%.cmo: %.ml
+	ocamlc -c $stem.ml
+
+%.cmi: %.mli
+	ocamlc -c $stem.mli
+
+parse_gen.ml parse_gen.mli: parse.ss ../serpent/serpent
+	../serpent/serpent parse.ss
+
+lexer.ml: lexer.mll
+	ocamllex lexer.mll
+
+clean:V:
+	rm -f $TARG *.cmi *.cmo parse_gen.^(ml mli) lexer.ml serpent.output
+
+lexer.cmo: parse_gen.cmo
+main.cmo: parse_gen.cmo lexer.cmo
+parse_gen.cmo: parse_gen.cmi ast.cmo
+<|ocamldep $MLFILES $IFILES

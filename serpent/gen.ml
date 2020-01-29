@@ -77,6 +77,10 @@ let printReduce f idx lhs rhs code types restore_line =
 		Format.fprintf f "_S%d::" (n-i)
 	);
 	Format.fprintf f "({state={goto}}::_ as rest) ->@\n";
+	if n <> 0 then
+		Format.fprintf f "\t\t\tlet _pos = merge _S1.pos _S%d.pos in@\n" n
+	else
+		Format.fprintf f "\t\t\tlet _pos = (Lexing.lexeme_end_p buf, Lexing.lexeme_end_p buf) in@\n";				
 	List.rev rhs |> List.iteri (fun i x ->
 		match H.find_opt types x with
 		| Some t ->
@@ -94,12 +98,8 @@ let printReduce f idx lhs rhs code types restore_line =
 		) l;
 		Format.fprintf f "@\n";
 		restore_line ());
-	if n <> 0 then
-		Format.fprintf f "\t\t\t) in let pos = merge _S1.pos _S%d.pos@\n" n
-	else
-		Format.fprintf f "\t\t\t) in let pos = (Lexing.lexeme_end_p buf, Lexing.lexeme_end_p buf)@\n";				
-	Format.fprintf f "\t\t\tin let state' = goto NT_%s in@\n" (nonterminal lhs);
-	Format.fprintf f "\t\t\tstack := {state=state'; expr=Obj.repr(expr); pos}::rest; state'.fn ()@\n";
+	Format.fprintf f "\t\t\t) in let state' = goto NT_%s in@\n" (nonterminal lhs);
+	Format.fprintf f "\t\t\tstack := {state=state'; expr=Obj.repr(expr); pos=_pos}::rest; state'.fn ()@\n";
 	Format.fprintf f "\t\t| _ -> assert false@\n"
 
 let isReduce a =
