@@ -72,5 +72,5 @@ let _ =
 ### INPUT ###
 1 2 +
 ### OUTPUT ###
-syntax error, got TNUM, expected one of TDIV TEXP TMINUS TMUL TNL TPLUS TRPAREN
+syntax error, got TNUM, expected one of TDIV TEXP TMINUS TMUL TNL TPLUS
 ### END ###

@@ -1,14 +1,6 @@
 ### SERPENT ###
 %token
-	TPLUS="+"
-	TMINUS="-"
-	TMUL="*"
-	TDIV="/"
-	TEXP="**"
-	TLPAREN="("
-	TRPAREN=")"
 	TCOMMA=","
-	TNL
 
 %token <float> TNUM
 
@@ -32,13 +24,6 @@ optional($X) := $X { Some $1 } | { None }
 rule token = parse
 	[' ' '\t' '\n'] { token lexbuf }
 	| ['0'-'9']+ as s { TNUM(float_of_string s) }
-	| '+' { TPLUS }
-	| '-' { TMINUS }
-	| '/' { TDIV }
-	| '*' '*' { TEXP }
-	| '*' { TMUL }
-	| '(' { TLPAREN }
-	| ')' { TRPAREN }
 	| ',' { TCOMMA }
 	| eof { TEOF }
 

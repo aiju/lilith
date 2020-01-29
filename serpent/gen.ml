@@ -33,7 +33,12 @@ let parse lex buf errorfn =
 		match !peeked with
 		| Some x -> x
 		| None -> let s = lex buf in peeked := Some s; s
+	and shift state expr =
+		let pos = (Lexing.lexeme_start_p buf, Lexing.lexeme_end_p buf) in
+		let el = {state; expr; pos} in
+		ignore (next ()); stack := el :: !stack; state.fn ()
 	and accept () = match !stack with {expr}::_ -> Obj.obj(expr) | _ -> assert false
+	and empty_goto _ = assert false
 	and error tok follow =
 		(if follow = [] then
 			Format.sprintf \"syntax error, got %s\" (token_show tok)
@@ -63,60 +68,96 @@ let nonterminal s =
 		| _ -> '_') (Symbol.name s) in
 	trys fixed
 
-let printState f i st types restore_line =
-	Format.fprintf f "\tand statefn%d () =@\n" i;
-	Format.fprintf f "\t\tmatch peek () with@\n";
-	H.iter (fun e a ->
-		if H.mem types e then
-			Format.fprintf f "\t\t| %a(_arg) -> " Symbol.pp e
-		else
-			Format.fprintf f "\t\t| %a -> let _arg = () in " Symbol.pp e;
+let printReduce f idx lhs rhs code types restore_line =
+	Format.fprintf f "\tand reduce%d () = match !stack with@\n\t\t" idx;
+	let n = List.length rhs in
+	List.rev rhs |> List.iteri (fun i x ->
+		Format.fprintf f "_S%d::" (n-i)
+	);
+	Format.fprintf f "({state={goto}}::_ as rest) ->@\n";
+	List.rev rhs |> List.iteri (fun i x ->
+		match H.find_opt types x with
+		| Some t ->
+			Format.fprintf f "\t\t\tlet _%d : %s = Obj.obj _S%d.expr in@\n" (n-i) t (n-i)
+		| _ ->  ()
+	);
+	Format.fprintf f "\t\t\tlet expr : 'nt_%s = (" (nonterminal lhs);
+	(match code with
+	| None -> if n = 1 then Format.fprintf f "_1"
+	| Some l -> List.iter (fun frag ->
+			match frag with
+			| Piece s -> Format.pp_print_string f s
+			| Var n -> Format.fprintf f "_%d" n
+			| Line (s,n) -> Format.fprintf f "@\n# %d \"%s\"@\n" n s
+		) l;
+		Format.fprintf f "@\n";
+		restore_line ());
+	if n <> 0 then
+		Format.fprintf f "\t\t\t) in let pos = merge _S1.pos _S%d.pos@\n" n
+	else
+		Format.fprintf f "\t\t\t) in let pos = (Lexing.lexeme_end_p buf, Lexing.lexeme_end_p buf)@\n";				
+	Format.fprintf f "\t\t\tin let state' = goto NT_%s in@\n" (nonterminal lhs);
+	Format.fprintf f "\t\t\tstack := {state=state'; expr=Obj.repr(expr); pos}::rest; state'.fn ()@\n";
+	Format.fprintf f "\t\t| _ -> assert false@\n"
+
+let isReduce a =
+	match a with
+	| Reduce(_,_,_,_) -> true
+	| _ -> false
+
+let determineDefault actions =
+	let counts = H.create 0 in
+	H.iter (fun _ a ->
 		match a with
-		| Shift(n) ->
-			Format.fprintf f "@\n\t\t\tlet pos = (Lexing.lexeme_start_p buf, Lexing.lexeme_end_p buf) in@\n";
-			Format.fprintf f "\t\t\tlet state' = {state=state%d; expr=(Obj.repr(_arg)); pos} in@\n" n;
-			Format.fprintf f "\t\t\t\tignore (next ()); stack := state' :: !stack; statefn%d ()\n" n
-		| Reduce(_,lhs,rhs,code) ->
-			Format.fprintf f "(match !stack with@\n\t\t\t";
-			let n = List.length rhs in
-			List.rev rhs |> List.iteri (fun i x ->
-				Format.fprintf f "_S%d::" (n-i)
-			);
-			Format.fprintf f "({state={goto}}::_ as rest) ->@\n";
-			List.rev rhs |> List.iteri (fun i x ->
-				match H.find_opt types x with
-				| Some t ->
-					Format.fprintf f "\t\t\t\tlet _%d : %s = Obj.obj _S%d.expr in@\n" (n-i) t (n-i)
-				| _ ->  ()
-			);
-			Format.fprintf f "\t\t\t\tlet expr = Obj.repr (";
-			(match code with
-			| None -> if n = 1 then Format.fprintf f "_1"
-			| Some l -> List.iter (fun frag ->
-					match frag with
-					| Piece s -> Format.pp_print_string f s
-					| Var n -> Format.fprintf f "_%d" n
-					| Line (s,n) -> Format.fprintf f "@\n# %d \"%s\"@\n" n s
-				) l;
-				Format.fprintf f "@\n";
-				restore_line ());
-			if n <> 0 then
-				Format.fprintf f "\t\t\t\t) in let pos = merge _S1.pos _S%d.pos@\n" n
-			else
-				Format.fprintf f "\t\t\t\t) in let pos = (Lexing.lexeme_end_p buf, Lexing.lexeme_end_p buf)@\n";				
-			Format.fprintf f "\t\t\t\tin let state' = goto NT_%s in@\n" (nonterminal lhs);
-			Format.fprintf f "\t\t\t\tstack := {state=state'; expr; pos}::rest; state'.fn ()@\n";
-			Format.fprintf f "\t\t\t| _ -> assert false)@\n"
+		| Shift _ -> ()
+		| _ -> match H.find_opt counts a with
+			| None -> H.add counts a 0
+			| Some n -> H.add counts a (n+1)
+	) actions;
+	let (defn, defa) = H.fold (fun a n (n',a') ->
+		if (n > n' || (a' = Error && isReduce(a))) && not (a = Error && isReduce(a')) then
+			(n,a)
+		else
+			(n',a')
+	) counts (0, Error) in
+	defa
+
+let printState f i st types =
+	let printAction a arg =
+		match a with
+		| Shift(n) -> Format.fprintf f "shift state%d (Obj.repr %s)@\n" n arg
+		| Reduce(idx,_,_,_) -> Format.fprintf f "reduce%d ()@\n" idx
 		| Accept -> Format.fprintf f "accept ()@\n"
-		| Error -> Format.fprintf f "error (peek()) state%d.follow@\n" i
-	) st.action;
-	Format.fprintf f "| _ -> error (peek()) state%d.follow@\n" i;
-	Format.fprintf f "\tand goto%d nt =@\n" i;
-	Format.fprintf f "\t\tmatch nt with@\n";
-	H.iter (fun e s' ->
-		Format.fprintf f "\t\t| NT_%s -> state%d\n" (nonterminal e) s') st.goto;
-	Format.fprintf f "\t\t| _ -> assert false@\n";
-	Format.fprintf f "\tand state%d = {fn=statefn%d; goto=goto%d; follow=List.sort_uniq compare [" i i i;
+		| Error -> Format.fprintf f "error (peek()) state%d.follow@\n" i in
+	let default = determineDefault st.action in
+	let all_default = H.fold (fun _ a b -> (a = default || a = Error && isReduce default) && b) st.action true in
+	if all_default then (
+		Format.fprintf f "\tand statefn%d () = " i;
+		printAction default "()"
+	) else (
+		Format.fprintf f "\tand statefn%d () =@\n" i;
+		Format.fprintf f "\t\tmatch peek () with@\n";
+		H.iter (fun e a ->
+			if a <> default && (a <> Error || not (isReduce default)) then
+			let arg =
+				if H.mem types e then
+					(Format.fprintf f "\t\t| %a(_arg) -> " Symbol.pp e; "_arg")
+				else
+					(Format.fprintf f "\t\t| %a -> " Symbol.pp e; "()")
+			in printAction a arg
+		) st.action;
+		Format.fprintf f "\t\t| _ -> ";
+		printAction default "()"
+	);
+	let goto = if H.length st.goto > 0 then (
+		Format.fprintf f "\tand goto%d nt =@\n" i;
+		Format.fprintf f "\t\tmatch nt with@\n";
+		H.iter (fun e s' ->
+			Format.fprintf f "\t\t| NT_%s -> state%d\n" (nonterminal e) s') st.goto;
+		Format.fprintf f "\t\t| _ -> assert false@\n";
+		Format.sprintf "goto%d" i
+	)else "empty_goto" in
+	Format.fprintf f "\tand state%d = {fn=statefn%d; goto=%s; follow=List.sort_uniq compare [" i i goto;
 	H.iter (fun e a ->
 		match a with
 		| Error -> ()
@@ -135,6 +176,7 @@ let gen_ml name f lalr terminals types =
 	let types = H.copy types in
 	let nstates = H.fold (fun (id,_) _ c -> max c (id+1)) (LALR.actions lalr) 0 in
 	let states = Array.init nstates (fun _ -> {action=H.create 0; goto=H.create 0}) in
+	LALR.endSym::terminals |> List.iter (fun t -> states |> Array.iter (fun s -> H.add s.action t Error));
 	LALR.actions lalr |> H.iter (fun (id,e) a -> H.replace states.(id).action e a);
 	LALR.goto lalr |> H.iter (fun (id,e) s' -> H.add states.(id).goto e s');
 	
@@ -161,11 +203,18 @@ let gen_ml name f lalr terminals types =
 		Format.fprintf f "\t| NT_%s@\n" (nonterminal s)
 	);
 	Format.fprintf f "%s" fn_header;
-	Array.iteri (fun i st ->
-		printState f i st types (fun () ->
+	
+	let reduces = H.create 0 in
+	LALR.actions lalr |> H.iter (fun (_, _) a -> match a with
+		| Reduce(idx,lhs,rhs,code) ->
+			(match H.find_opt reduces idx with
+			| Some r -> assert (r = (lhs,rhs,code))
+			| None -> H.add reduces idx (lhs,rhs,code))
+		| _ -> ());
+	reduces |> H.iter (fun idx (lhs,rhs,code) -> printReduce f idx lhs rhs code types (fun () ->
 			Format.fprintf f "# %d \"%s\"@\n" ((!nlctr) + 1) name
-		)
-	) states;
+		));
+	Array.iteri (fun i st -> printState f i st types) states;
 	Format.fprintf f "%s" fn_footer
 
 let gen_mli f lalr terminals types =
