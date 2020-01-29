@@ -256,6 +256,7 @@ let parse s g =
 		| "%left" -> incr preclevel; p_assoc Left (!preclevel)
 		| "%right" -> incr preclevel; p_assoc Right (!preclevel)
 		| "%nonassoc" -> incr preclevel; p_assoc Nonassoc (!preclevel)
+		| "%unary" -> incr preclevel; p_assoc Unary (!preclevel)
 		| "%type" -> p_type ();
 		| "%%" -> ()
 		| s -> error ("unknown directive "^s)

@@ -37,7 +37,7 @@ let parse lex buf errorfn =
 		let pos = (Lexing.lexeme_start_p buf, Lexing.lexeme_end_p buf) in
 		let el = {state; expr; pos} in
 		ignore (next ()); stack := el :: !stack; state.fn ()
-	and accept () = match !stack with {expr}::_ -> Obj.obj(expr) | _ -> assert false
+	and accept () = ()
 	and empty_goto _ = assert false
 	and error tok follow =
 		(if follow = [] then
@@ -49,7 +49,9 @@ let parse lex buf errorfn =
 		assert false
 "
 let fn_footer =
-"	in stack := [{state=state0; expr=Obj.repr(()); pos=(Lexing.dummy_pos, Lexing.dummy_pos)}]; statefn0 ()
+"	in stack := [{state=state0; expr=Obj.repr(()); pos=(Lexing.dummy_pos, Lexing.dummy_pos)}];
+	statefn0 ();
+	Obj.obj((List.hd !stack).expr)
 "
 
 let ntab = H.create 0

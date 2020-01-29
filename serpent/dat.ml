@@ -4,4 +4,4 @@ type action =
 	| Reduce of int * Symbol.t * Symbol.t list * fragment list option
 	| Accept
 	| Error
-type assoctype = Left | Right | Nonassoc
+type assoctype = Left | Right | Nonassoc | Unary

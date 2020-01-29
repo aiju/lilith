@@ -196,10 +196,10 @@ let shiftreduce g state token shift (idx,lhs,rhs,act) =
 		| _ -> assert false in
 	let tokenprec = H.find_opt g.prectab token in
 	match ruleprec, tokenprec with
-	| None, _ | _, None ->
-		H.add g.actions (state, token) (Reduce (idx,lhs,rhs,act))
+	| None, _ | _, None -> H.add g.actions (state, token) (Reduce (idx,lhs,rhs,act))
 	| Some(l, _), Some(l', _) when l < l' -> H.replace g.actions (state, token) (Shift shift)
 	| Some(l, _), Some(l', _) when l > l' -> H.replace g.actions (state, token) (Reduce(idx,lhs,rhs,act))
+	| Some(_, Unary), _ -> 	H.add g.actions (state, token) (Reduce (idx,lhs,rhs,act))
 	| Some(_, Left), _ -> H.replace g.actions (state, token) (Reduce(idx, lhs, rhs, act))
 	| Some(_, Right), _ -> H.replace g.actions (state, token) (Shift shift)
 	| Some(_, Nonassoc), _ -> H.replace g.actions (state, token) Error
