@@ -608,7 +608,7 @@ let _ =
 	let mlname = base ^ "_gen.ml" in
 	let ml = Format.formatter_of_out_channel (open_out mlname) in
 	Format.fprintf ml "%s@\n" !header;
-	Gen.gen_ml mlname ml lalr (Ss.elements g.terminals) g.types;
+	Gen.gen_ml mlname ml lalr (Ss.elements g.terminals) g.types g.literals;
 	Format.fprintf ml "@\n%s@\n" !footer;
 	Format.pp_print_flush ml ();
 	let mli = Format.formatter_of_out_channel (open_out (base ^ "_gen.mli")) in

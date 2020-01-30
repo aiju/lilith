@@ -34,11 +34,11 @@ let parse lex buf errorfn =
 		ignore (next ()); stack := el :: !stack; state.fn ()
 	and accept () = ()
 	and error tok follow =
-		(if follow = [] then
-			Format.sprintf \"syntax error, got %s\" (token_show tok)
-		else
-			(Format.sprintf \"syntax error, got %s, expected one of \" (token_show tok)) ^
-			(List.fold_left (fun a b -> a ^ \" \" ^ b) (List.hd follow) (List.tl follow))
+		(match List.rev follow with
+		| [] -> Format.sprintf \"syntax error, got %s\" (token_show tok)
+		| [x] -> Format.sprintf \"syntax error, got %s, expected %s\" (token_show tok) x
+		| h::t -> (Format.sprintf \"syntax error, got %s, expected \" (token_show tok)) ^
+			(String.concat \", \" (List.rev t)) ^ \" or \" ^ h
 		) |> errorfn (Lexing.lexeme_start_p buf, Lexing.lexeme_end_p buf);
 		assert false
 "
@@ -127,12 +127,14 @@ let stateFunction actions types =
 			c
 	) actions [] |> List.sort (fun (a, _, _) (b, _, _) -> Symbol.nameCompare a b), default)
 
-let prepareStates lalr terminals types =
+let prepareStates lalr terminals types literals =
 	let types = H.copy types in
 	LALR.nonterminals lalr |> List.iter (fun s ->
 		if not (H.mem types s) then
 			H.add types s ("'nt_" ^ (nonterminal s))
 	);
+	let invLiterals = H.create 0 in
+	H.iter (fun a b -> H.add invLiterals b a) literals;
 	let nstates = H.fold (fun (id,_) _ c -> max c (id+1)) (LALR.actions lalr) 0 in
 	let emptyState = H.create 0 in
 	LALR.endSym::terminals |> List.iter (fun t -> H.add emptyState t Error);
@@ -153,7 +155,15 @@ let prepareStates lalr terminals types =
 		let gotofn = (match H.find_opt gotofnstab f with
 		| None -> H.add gotofnstab f i; gotofns := (i, f)::!gotofns; i
 		| Some j -> j) in
-		let follow = H.fold (fun e a c -> if a <> Error then e::c else c) actions.(i) [] |> List.sort Symbol.nameCompare in
+		let follow =
+			H.fold (fun e a c ->
+				if a <> Error then
+					(match H.find_opt invLiterals e with
+					| Some l -> "'" ^ l ^ "'"
+					| None -> Symbol.name e)::c
+				else
+					c) actions.(i) []
+			|> List.sort compare in
 		(statefn, gotofn, follow)
 	) in
 	(states, List.rev !statefns, List.rev !gotofns, types)
@@ -196,7 +206,7 @@ let printGotoFunction f (i, goto) =
 
 let printState f i (statefn, gotofn, follow) =
 	Format.fprintf f "\tand state%d = {fn=statefn%d; goto=goto%d; follow=[" i statefn gotofn;
-	List.iter (Format.fprintf f "\"%a\";" Symbol.pp) follow;
+	List.iter (Format.fprintf f "%S;") follow;
 	Format.fprintf f "]}@\n"
 
 let prepareFormatter f name = 
@@ -241,8 +251,8 @@ let printReduces f lalr types restore_line =
 	|> List.sort compare
 	|> List.iter (fun (idx, (lhs,rhs,code)) -> printReduce f idx lhs rhs code types restore_line)
 
-let gen_ml name f lalr terminals types =
-	let (states, statefns, gotofns, types) = prepareStates lalr terminals types in
+let gen_ml name f lalr terminals types literals =
+	let (states, statefns, gotofns, types) = prepareStates lalr terminals types literals in
 	let restore_line = prepareFormatter f name in
 	printTokenType f terminals types;
 	printNonterminalsType f lalr;
