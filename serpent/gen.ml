@@ -1,11 +1,6 @@
 module H = Hashtbl
 open Dat
 
-type state = {
-	action: (Symbol.t, action) H.t;
-	goto: (Symbol.t, int) H.t
-}
-
 let fn_header =
 "exception ParseError
 
@@ -38,7 +33,6 @@ let parse lex buf errorfn =
 		let el = {state; expr; pos} in
 		ignore (next ()); stack := el :: !stack; state.fn ()
 	and accept () = ()
-	and empty_goto _ = assert false
 	and error tok follow =
 		(if follow = [] then
 			Format.sprintf \"syntax error, got %s\" (token_show tok)
@@ -124,50 +118,88 @@ let determineDefault actions =
 	) counts (0, Error) in
 	defa
 
-let printState f i st types =
+let stateFunction actions types = 
+	let default = determineDefault actions in
+	(H.fold (fun e a c ->
+		if a <> default && (a <> Error || not (isReduce default)) then
+			(e, H.mem types e, a)::c
+		else
+			c
+	) actions [] |> List.sort (fun (a, _, _) (b, _, _) -> Symbol.nameCompare a b), default)
+
+let prepareStates lalr terminals types =
+	let types = H.copy types in
+	LALR.nonterminals lalr |> List.iter (fun s ->
+		if not (H.mem types s) then
+			H.add types s ("'nt_" ^ (nonterminal s))
+	);
+	let nstates = H.fold (fun (id,_) _ c -> max c (id+1)) (LALR.actions lalr) 0 in
+	let emptyState = H.create 0 in
+	LALR.endSym::terminals |> List.iter (fun t -> H.add emptyState t Error);
+	let actions = Array.init nstates (fun _ -> H.copy emptyState) in
+	let goto = Array.make nstates [] in
+	LALR.actions lalr |> H.iter (fun (id,e) a -> H.replace actions.(id) e a);
+	LALR.goto lalr |> H.iter (fun (id,e) s' -> goto.(id) <- (e, s')::goto.(id));
+	let statefnstab = H.create 0 in
+	let gotofnstab = H.create 0 in
+	let statefns = ref [] in
+	let gotofns = ref [] in
+	let states = Array.init nstates (fun i ->
+		let f = stateFunction actions.(i) types in
+		let statefn = (match H.find_opt statefnstab f with
+		| None -> H.add statefnstab f i; statefns := (i, f)::!statefns; i
+		| Some j -> j) in
+		let f = List.sort (fun (a, _) (b, _) -> Symbol.nameCompare a b) goto.(i) in
+		let gotofn = (match H.find_opt gotofnstab f with
+		| None -> H.add gotofnstab f i; gotofns := (i, f)::!gotofns; i
+		| Some j -> j) in
+		let follow = H.fold (fun e a c -> if a <> Error then e::c else c) actions.(i) [] |> List.sort Symbol.nameCompare in
+		(statefn, gotofn, follow)
+	) in
+	(states, List.rev !statefns, List.rev !gotofns, types)
+
+let printStateFunction f (i, (acts, default)) = 
 	let printAction a arg =
 		match a with
 		| Shift(n) -> Format.fprintf f "shift state%d (Obj.repr %s)@\n" n arg
 		| Reduce(idx,_,_,_) -> Format.fprintf f "reduce%d ()@\n" idx
 		| Accept -> Format.fprintf f "accept ()@\n"
 		| Error -> Format.fprintf f "error (peek()) state%d.follow@\n" i in
-	let default = determineDefault st.action in
-	let all_default = H.fold (fun _ a b -> (a = default || a = Error && isReduce default) && b) st.action true in
-	if all_default then (
+	if acts = [] then (
 		Format.fprintf f "\tand statefn%d () = " i;
 		printAction default "()"
 	) else (
 		Format.fprintf f "\tand statefn%d () =@\n" i;
 		Format.fprintf f "\t\tmatch peek () with@\n";
-		H.iter (fun e a ->
-			if a <> default && (a <> Error || not (isReduce default)) then
+		acts |> List.iter (fun (e, has_arg, a) ->
 			let arg =
-				if H.mem types e then
+				if has_arg then
 					(Format.fprintf f "\t\t| %a(_arg) -> " Symbol.pp e; "_arg")
 				else
 					(Format.fprintf f "\t\t| %a -> " Symbol.pp e; "()")
 			in printAction a arg
-		) st.action;
+		);
 		Format.fprintf f "\t\t| _ -> ";
 		printAction default "()"
-	);
-	let goto = if H.length st.goto > 0 then (
-		Format.fprintf f "\tand goto%d nt =@\n" i;
-		Format.fprintf f "\t\tmatch nt with@\n";
-		H.iter (fun e s' ->
-			Format.fprintf f "\t\t| NT_%s -> state%d\n" (nonterminal e) s') st.goto;
-		Format.fprintf f "\t\t| _ -> assert false@\n";
-		Format.sprintf "goto%d" i
-	)else "empty_goto" in
-	Format.fprintf f "\tand state%d = {fn=statefn%d; goto=%s; follow=List.sort_uniq compare [" i i goto;
-	H.iter (fun e a ->
-		match a with
-		| Error -> ()
-		| _ -> Format.fprintf f "\"%a\";" Symbol.pp e
-	) st.action;
+	)
+
+let printGotoFunction f (i, goto) =
+	Format.fprintf f "\tand goto%d nt = " i;
+	match goto with
+	| [] -> Format.fprintf f "assert false @\n"
+	| [_, s'] -> Format.fprintf f "state%d@\n" s'
+	| _ ->
+		Format.fprintf f "@\n\t\tmatch nt with@\n";
+		List.iter (fun (e, s') ->
+			Format.fprintf f "\t\t| NT_%s -> state%d\n" (nonterminal e) s') goto;
+		Format.fprintf f "\t\t| _ -> assert false@\n"
+
+let printState f i (statefn, gotofn, follow) =
+	Format.fprintf f "\tand state%d = {fn=statefn%d; goto=goto%d; follow=[" i statefn gotofn;
+	List.iter (Format.fprintf f "\"%a\";" Symbol.pp) follow;
 	Format.fprintf f "]}@\n"
 
-let gen_ml name f lalr terminals types =
+let prepareFormatter f name = 
 	let nlctr = ref 1 in
 	(let fn = Format.pp_get_formatter_out_functions f () in
 	let out s p n = String.iteri (fun i c ->
@@ -175,18 +207,9 @@ let gen_ml name f lalr terminals types =
 			incr nlctr
 	) s; fn.out_string s p n in
 	Format.pp_set_formatter_out_functions f {fn with Format.out_string=out});
-	let types = H.copy types in
-	let nstates = H.fold (fun (id,_) _ c -> max c (id+1)) (LALR.actions lalr) 0 in
-	let states = Array.init nstates (fun _ -> {action=H.create 0; goto=H.create 0}) in
-	LALR.endSym::terminals |> List.iter (fun t -> states |> Array.iter (fun s -> H.add s.action t Error));
-	LALR.actions lalr |> H.iter (fun (id,e) a -> H.replace states.(id).action e a);
-	LALR.goto lalr |> H.iter (fun (id,e) s' -> H.add states.(id).goto e s');
-	
-	LALR.nonterminals lalr |> List.iter (fun s ->
-		if not (H.mem types s) then
-			H.add types s ("'nt_" ^ (nonterminal s))
-	);
-	
+	(fun () -> Format.fprintf f "# %d \"%s\"@\n" ((!nlctr) + 1) name)
+
+let printTokenType f terminals types =
 	Format.fprintf f "type token = @\n";
 	(LALR.endSym::terminals) |> List.iter (fun s ->
 		match H.find_opt types s with
@@ -198,14 +221,15 @@ let gen_ml name f lalr terminals types =
 		match H.find_opt types s with
 		| Some x -> Format.fprintf f "\t| %a(_) -> \"%a\"@\n" Symbol.pp s Symbol.pp s
 		| None -> Format.fprintf f "\t| %a -> \"%a\"@\n" Symbol.pp s Symbol.pp s
-	);
-	
+	)
+
+let printNonterminalsType f lalr =
 	Format.fprintf f "type nonterminal = @\n";
 	LALR.nonterminals lalr |> List.iter (fun s ->
 		Format.fprintf f "\t| NT_%s@\n" (nonterminal s)
-	);
-	Format.fprintf f "%s" fn_header;
-	
+	)
+
+let printReduces f lalr types restore_line =
 	let reduces = H.create 0 in
 	LALR.actions lalr |> H.iter (fun (_, _) a -> match a with
 		| Reduce(idx,lhs,rhs,code) ->
@@ -213,10 +237,20 @@ let gen_ml name f lalr terminals types =
 			| Some r -> assert (r = (lhs,rhs,code))
 			| None -> H.add reduces idx (lhs,rhs,code))
 		| _ -> ());
-	reduces |> H.iter (fun idx (lhs,rhs,code) -> printReduce f idx lhs rhs code types (fun () ->
-			Format.fprintf f "# %d \"%s\"@\n" ((!nlctr) + 1) name
-		));
-	Array.iteri (fun i st -> printState f i st types) states;
+	H.fold (fun k v c -> (k,v)::c) reduces []
+	|> List.sort compare
+	|> List.iter (fun (idx, (lhs,rhs,code)) -> printReduce f idx lhs rhs code types restore_line)
+
+let gen_ml name f lalr terminals types =
+	let (states, statefns, gotofns, types) = prepareStates lalr terminals types in
+	let restore_line = prepareFormatter f name in
+	printTokenType f terminals types;
+	printNonterminalsType f lalr;
+	Format.fprintf f "%s" fn_header;
+	printReduces f lalr types restore_line;
+	List.iter (printStateFunction f) statefns;
+	List.iter (printGotoFunction f) gotofns;
+	Array.iteri (printState f) states;
 	Format.fprintf f "%s" fn_footer
 
 let gen_mli f lalr terminals types =
