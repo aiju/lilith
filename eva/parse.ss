@@ -48,22 +48,34 @@
 
 %%
 
-program: sequence(optstat ";") { p _pos (Fix($1)) }
+program: sequence(stat(c,s)) { p _pos (Fix($1)) }
 
-sequence($X): { [] } | sequence($X) $X { $1 @ [$2] }
+sequence($X): $X { [$1] } | sequence($X) $X { $1 @ [$2] }
 optional($X):= { None } | $X { Some $1 }
 list($X): { [] } | list1($X) (| ",")
 list1($X): $X { [$1] } | list1($X) "," $X { $1 @ [$2] }
 
-optstat: { p _pos (Seq[]) } | stat(c)
+eseq:
+	stat(c,n)
+	| seq0 empty { p _pos (Seq ($1@[$2])) }
+	| seq0 stat(c,n) { p _pos (Seq ($1@[$2])) }
+seq0: stat(c,s) { [$1] } | seq0 stat(c,s) { $1 @ [$2] }
+empty: { p _pos (Seq[]) }
 
-stat($X):
-	expr($X)
-	| expr($X) "=" expr($X) { p _pos (Assign($1, $2)) }
-	| "if" "(" stat($X) ")" stat($X) {p _pos (If($1,$2,p _pos (Seq[])))}
-	| "if" "(" stat($X) ")" stat($X) "else" stat($X) {p _pos (If($1,$2,$3))}
-	| "while" "(" stat($X) ")" stat($X) {p _pos (While($1,$2))}
-	| "do" stat($X) "while" "(" stat($X) ")" {p _pos (DoWhile($1,$2))}
+stat($x,s):
+	";" { p _pos (Seq[]) }
+	| expr($x) ";"
+	| expr($x) "=" stat($x,n) ";" { p _pos (Assign($1, $2)) }
+
+stat($x,n):
+	expr($x)
+	| expr($x) "=" stat($x,n) { p _pos (Assign($1, $2)) }
+
+stat($x,$y):
+	 "if" "(" eseq ")" stat($x,$y) {p _pos (If($1,$2,p _pos (Seq[])))}
+	| "if" "(" eseq ")" stat($x,$y) "else" stat($x,$y) {p _pos (If($1,$2,$3))}
+	| "while" "(" eseq ")" stat($x,$y) {p _pos (While($1,$2))}
+	| "do" stat($x,$y) "while" "(" eseq ")" {p _pos (DoWhile($1,$2))}
 
 expr(c) := cexpr
 expr(n) := nexpr
@@ -96,8 +108,7 @@ binop :=
 primary:
 	TSYM { p _pos (Sym($1)) }
 	| TINTLIT { p _pos (IntLit($1)) }
-	| primary "(" list(stat(n)) ")" { p _pos (Call($1, $2)) }
-	| primary "[" list(stat(n)) "]" { p _pos (Index($1, $2)) }
-	| "(" stat(c) ")"
-	| "(" optstat ";" sequence(optstat ";") optstat ")" { p _pos (Seq ([$1] @ $2 @ [$3])) }
-	| "[" list(stat(n)) "]" { p _pos (Array $1) }
+	| primary "(" list(stat(n,s)) ")" { p _pos (Call($1, $2)) }
+	| primary "[" list(stat(n,s)) "]" { p _pos (Index($1, $2)) }
+	| "(" eseq ")"
+	| "[" list(stat(n,s)) "]" { p _pos (Array $1) }
