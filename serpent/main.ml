@@ -605,6 +605,7 @@ let _ =
 	expandRules g start |> calcStack g |> generateRules g;
 	let lalr = LALR.create g.genrules g.prec start in
 	LALR.printStates (Format.formatter_of_out_channel (open_out "serpent.output")) lalr;
+	Conflict.analyseConflicts lalr;
 	let mlname = base ^ "_gen.ml" in
 	let ml = Format.formatter_of_out_channel (open_out mlname) in
 	Format.fprintf ml "%s@\n" !header;

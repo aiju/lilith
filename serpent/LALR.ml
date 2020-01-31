@@ -246,6 +246,7 @@ let goto g = H.copy g.goto
 let terminals g = g.terminals
 let nonterminals g = g.nonterminals
 let start g = g.start
+let rules g = g.rules
 	
 let create rules' prectab start =
 	let rules = H.create 0 in

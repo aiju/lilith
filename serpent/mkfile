@@ -4,6 +4,7 @@ OFILES=\
 	grapheval.cmo\
 	LALR.cmo\
 	gen.cmo\
+	conflict.cmo\
 	main.cmo\
 
 IFILES=\

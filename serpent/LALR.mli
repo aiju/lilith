@@ -17,5 +17,8 @@ val goto : t -> (int * Symbol.t, int) Hashtbl.t
 val terminals : t -> Symbol.t list
 val nonterminals : t -> Symbol.t list
 val start : t -> Symbol.t
+val rules : t -> (Symbol.t, rule) Hashtbl.t
 
 val printStates : Format.formatter -> t -> unit
+val findconflicts : t -> (int, Symbol.t * int * int) Hashtbl.t * (int, Symbol.t * int * int) Hashtbl.t
+
