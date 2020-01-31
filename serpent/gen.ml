@@ -127,14 +127,12 @@ let stateFunction actions types =
 			c
 	) actions [] |> List.sort (fun (a, _, _) (b, _, _) -> Symbol.nameCompare a b), default)
 
-let prepareStates lalr terminals types literals =
+let prepareStates lalr terminals types invLiterals =
 	let types = H.copy types in
 	LALR.nonterminals lalr |> List.iter (fun s ->
 		if not (H.mem types s) then
 			H.add types s ("'nt_" ^ (nonterminal s))
 	);
-	let invLiterals = H.create 0 in
-	H.iter (fun a b -> H.add invLiterals b a) literals;
 	let nstates = H.fold (fun (id,_) _ c -> max c (id+1)) (LALR.actions lalr) 0 in
 	let emptyState = H.create 0 in
 	LALR.endSym::terminals |> List.iter (fun t -> H.add emptyState t Error);
@@ -219,7 +217,7 @@ let prepareFormatter f name =
 	Format.pp_set_formatter_out_functions f {fn with Format.out_string=out});
 	(fun () -> Format.fprintf f "# %d \"%s\"@\n" ((!nlctr) + 1) name)
 
-let printTokenType f terminals types =
+let printTokenType f terminals types invLiterals =
 	Format.fprintf f "type token = @\n";
 	(LALR.endSym::terminals) |> List.iter (fun s ->
 		match H.find_opt types s with
@@ -228,9 +226,12 @@ let printTokenType f terminals types =
 	);
 	Format.fprintf f "let token_show t = match t with\n";
 	(LALR.endSym::terminals) |> List.iter (fun s ->
-		match H.find_opt types s with
-		| Some x -> Format.fprintf f "\t| %a(_) -> \"%a\"@\n" Symbol.pp s Symbol.pp s
-		| None -> Format.fprintf f "\t| %a -> \"%a\"@\n" Symbol.pp s Symbol.pp s
+		(match H.find_opt types s with
+		| Some x -> Format.fprintf f "\t| %a(_) -> " Symbol.pp s
+		| None -> Format.fprintf f "\t| %a -> " Symbol.pp s);
+		Format.fprintf f "%S@\n" (match H.find_opt invLiterals s with
+			| Some x -> "'" ^ x ^ "'"
+			| None -> Symbol.name s) 
 	)
 
 let printNonterminalsType f lalr =
@@ -252,9 +253,11 @@ let printReduces f lalr types restore_line =
 	|> List.iter (fun (idx, (lhs,rhs,code)) -> printReduce f idx lhs rhs code types restore_line)
 
 let gen_ml name f lalr terminals types literals =
-	let (states, statefns, gotofns, types) = prepareStates lalr terminals types literals in
+	let invLiterals = H.create 0 in
+	H.iter (fun a b -> H.add invLiterals b a) literals;
+	let (states, statefns, gotofns, types) = prepareStates lalr terminals types invLiterals in
 	let restore_line = prepareFormatter f name in
-	printTokenType f terminals types;
+	printTokenType f terminals types invLiterals;
 	printNonterminalsType f lalr;
 	Format.fprintf f "%s" fn_header;
 	printReduces f lalr types restore_line;
