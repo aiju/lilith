@@ -39,7 +39,7 @@
 
 %unary "if"
 %unary "else"
-%right "->" "=" ":"
+%right ":"
 %nonassoc "==" "!=" "<" "<=" ">" ">="
 %left "+" "-"
 %left "*" "/" "%"
@@ -65,10 +65,12 @@ stat($x,s):
 	";" { p _pos (Seq[]) }
 	| expr($x) ";"
 	| expr($x) "=" stat($x,n) ";" { p _pos (Assign($1, $2)) }
+	| expr($x) "->" stat($x,n) ";" { p _pos (Lambda($1, $2)) }
 
 stat($x,n):
 	expr($x)
 	| expr($x) "=" stat($x,n) { p _pos (Assign($1, $2)) }
+	| expr($x) "->" stat($x,n) { p _pos (Lambda($1, $2)) }
 
 stat($x,$y):
 	 "if" "(" eseq(c) ")" stat($x,$y) {p _pos (If($1,$2,p _pos (Seq[])))}
@@ -82,7 +84,6 @@ expr(n) := nexpr
 cexpr:
 	nexpr
 	| nexpr "," list(nexpr) { p _pos (Tuple($1::$2)) }
-	| cexpr "->" stat(c,n) { p _pos (Lambda($1, $2)) }
 
 nexpr:
 	primary
