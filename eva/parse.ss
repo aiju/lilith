@@ -39,9 +39,8 @@
 
 %unary "if"
 %unary "else"
-%right "->"
+%right "->" "=" ":"
 %nonassoc "==" "!=" "<" "<=" ">" ">="
-%right "=" ":"
 %left "+" "-"
 %left "*" "/" "%"
 %nonassoc UMINUS
@@ -55,11 +54,11 @@ optional($X):= { None } | $X { Some $1 }
 list($X): { [] } | list1($X) (| ",")
 list1($X): $X { [$1] } | list1($X) "," $X { $1 @ [$2] }
 
-eseq:
-	stat(c,n)
-	| seq0 empty { p _pos (Seq ($1@[$2])) }
-	| seq0 stat(c,n) { p _pos (Seq ($1@[$2])) }
-seq0: stat(c,s) { [$1] } | seq0 stat(c,s) { $1 @ [$2] }
+eseq($x):
+	stat($x,n)
+	| seq0($x) empty { p _pos (Seq ($1@[$2])) }
+	| seq0($x) stat($x,n) { p _pos (Seq ($1@[$2])) }
+seq0($x): stat($x,s) { [$1] } | seq0($x) stat($x,s) { $1 @ [$2] }
 empty: { p _pos (Seq[]) }
 
 stat($x,s):
@@ -72,10 +71,10 @@ stat($x,n):
 	| expr($x) "=" stat($x,n) { p _pos (Assign($1, $2)) }
 
 stat($x,$y):
-	 "if" "(" eseq ")" stat($x,$y) {p _pos (If($1,$2,p _pos (Seq[])))}
-	| "if" "(" eseq ")" stat($x,$y) "else" stat($x,$y) {p _pos (If($1,$2,$3))}
-	| "while" "(" eseq ")" stat($x,$y) {p _pos (While($1,$2))}
-	| "do" stat($x,$y) "while" "(" eseq ")" {p _pos (DoWhile($1,$2))}
+	 "if" "(" eseq(c) ")" stat($x,$y) {p _pos (If($1,$2,p _pos (Seq[])))}
+	| "if" "(" eseq(c) ")" stat($x,$y) "else" stat($x,$y) {p _pos (If($1,$2,$3))}
+	| "while" "(" eseq(c) ")" stat($x,$y) {p _pos (While($1,$2))}
+	| "do" stat($x,$y) "while" "(" eseq(c) ")" {p _pos (DoWhile($1,$2))}
 
 expr(c) := cexpr
 expr(n) := nexpr
@@ -83,7 +82,7 @@ expr(n) := nexpr
 cexpr:
 	nexpr
 	| nexpr "," list(nexpr) { p _pos (Tuple($1::$2)) }
-	| cexpr "->" cexpr { p _pos (Lambda($1, $2)) }
+	| cexpr "->" stat(c,n) { p _pos (Lambda($1, $2)) }
 
 nexpr:
 	primary
@@ -108,7 +107,7 @@ binop :=
 primary:
 	TSYM { p _pos (Sym($1)) }
 	| TINTLIT { p _pos (IntLit($1)) }
-	| primary "(" list(stat(n,s)) ")" { p _pos (Call($1, $2)) }
-	| primary "[" list(stat(n,s)) "]" { p _pos (Index($1, $2)) }
-	| "(" eseq ")"
-	| "[" list(stat(n,s)) "]" { p _pos (Array $1) }
+	| primary "(" list(eseq(n)) ")" { p _pos (Call($1, $2)) }
+	| primary "[" list(eseq(n)) "]" { p _pos (Index($1, $2)) }
+	| "(" eseq(c) ")"
+	| "[" list(eseq(n)) "]" { p _pos (Array $1) }
