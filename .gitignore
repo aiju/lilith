@@ -4,3 +4,7 @@
 serpent.output
 8.*
 /serpent/serpent
+*_gen.ml
+*_gen.mli
+/eva/lexer.ml
+/eva/eva
