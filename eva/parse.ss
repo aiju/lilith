@@ -77,6 +77,7 @@ stat($x,$y):
 	| "if" "(" eseq(c) ")" stat($x,$y) "else" stat($x,$y) {p _pos (If($1,$2,$3))}
 	| "while" "(" eseq(c) ")" stat($x,$y) {p _pos (While($1,$2))}
 	| "do" stat($x,$y) "while" "(" eseq(c) ")" {p _pos (DoWhile($1,$2))}
+	| "for" "(" stat(c,n) ";" stat(c, n) ";" stat(c,n) ")" stat($x, $y) { p _pos (For($1,$2,$3,$4)) }
 
 expr(c) := cexpr
 expr(n) := nexpr

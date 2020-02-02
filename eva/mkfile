@@ -3,8 +3,11 @@ OFILES=\
 	symbol.cmo\
 	lexer.cmo\
 	ast.cmo\
+	astutil.cmo\
 	parse_gen.cmo\
-	semant.cmo\
+	graph.cmo\
+	vcg.cmo\
+	scope.cmo\
 	main.cmo\
 
 IFILES=\
@@ -18,13 +21,13 @@ TARG=eva
 all:V: $TARG
 
 $TARG: $OFILES
-	ocamlc -o $target $prereq
+	ocamlc -g -o $target $prereq
 
 %.cmo: %.ml
-	ocamlc -c $stem.ml
+	ocamlc -g -c $stem.ml
 
 %.cmi: %.mli
-	ocamlc -c $stem.mli
+	ocamlc -g -c $stem.mli
 
 parse_gen.ml parse_gen.mli: parse.ss ../serpent/serpent
 	../serpent/serpent parse.ss
