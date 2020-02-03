@@ -11,7 +11,10 @@
 		"while", TWHILE;
 		"do", TDO;
 		"for", TFOR;
-		"var", TVAR
+		"var", TVAR;
+		"let", TLET;
+		"in", TIN;
+		"fix", TFIX
 	]
 	let kwfind s =
 		let rec f t = match t with

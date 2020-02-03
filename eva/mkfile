@@ -8,10 +8,13 @@ OFILES=\
 	graph.cmo\
 	vcg.cmo\
 	scope.cmo\
+	types.cmo\
 	main.cmo\
 
 IFILES=\
 	parse_gen.mli\
+	symbol.mli\
+	graph.mli\
 
 MLFILES=${OFILES:%.cmo=%.ml}
 

@@ -36,6 +36,7 @@ type 'a ast_p =
 	| Array of 'a ast list
 	| Index of 'a ast * 'a ast list
 	| Lambda of 'a ast * 'a ast
+	| Let of 'a ast * 'a ast option
 and 'a ast = {p: 'a ast_p; pos: pos; meta: 'a}
 let posed pos p = {p;pos;meta=()}
 let repos old p meta = {p; pos=old.pos; meta}

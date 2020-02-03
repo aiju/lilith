@@ -76,9 +76,7 @@ and blockify up t : meta ast * block list * block list =
 	| Seq (_::_ as l) ->
 		let l' = List.map h l in
 		Util.iterAdj (fun (_, _, a) (_, b, _) -> edge a b) l';
-		let (e, _, bout) = Util.last l' in
-		let (_, bin, _) = List.hd l' in
-		(node (Seq (List.map (fun (a, _, _) -> a) l')), bin, bout)
+		(node (Seq (List.map (fun (a, _, _) -> a) l')), [up], [up])
 	| Fix l ->
 		let b = newblock BFix (Some up) in
 		let l' = List.map (fun x -> let (e, _, _) = blockify b x in e) l in
@@ -90,25 +88,36 @@ and blockify up t : meta ast * block list * block list =
 		and (b', bin, _) = blockify (newblock BSeq (Some block)) b in
 		edge [lhsblock] bin;
 		(node (Lambda (a', b')), [up], [up])
+	| Let(a,Some b) ->
+		let lhs = newblock BLet (Some up) in
+		let (a', _, bout) = blockify lhs a
+		and (b', bin, _) = h b in
+		edge bout bin;
+		(node (Let(a', Some b')), [up], [up])
+	| Let(a,None) ->
+		let block = newblock BLet up.up in
+		let (a', bin, bout) = blockify block a in
+		edge bout [up];
+		(node (Let(a', None)), bin, [up])
 	| If(a,b,c) ->
 		let (a', ain, aout) = h a and
 		(b', bin, bout) = h b and
 		(c', cin, cout) = h c in
 		edge aout bin;
 		edge aout cin;
-		(node (If(a', b', c')), ain, bout @ cout)
+		(node (If(a', b', c')), [up], [up])
 	| While(a, b) -> 
 		let (a', ain, aout) = h a and
 		(b', bin, bout) = h b in
 		edge aout bin;
 		edge bout ain;
-		(node (While(a', b')), ain, aout @ bout)
+		(node (While(a', b')), [up], [up])
 	| DoWhile(a, b) -> 
 		let (a', ain, aout) = h a and
 		(b', bin, bout) = h b in
 		edge aout bin;
 		edge bout ain;
-		(node (DoWhile(a', b')), ain, aout @ bout)
+		(node (DoWhile(a', b')), [up], [up])
 	| For(a, b, c, d) ->
 		let (a', ain, aout) = h a and
 		(b', bin, bout) = h b and
@@ -118,7 +127,7 @@ and blockify up t : meta ast * block list * block list =
 		edge bin din;
 		edge dout cin;
 		edge cout bin;
-		(node (For(a', b', c', d')), ain, bout @ cout)
+		(node (For(a', b', c', d')), [up], [up])
 	| Assign(a, b) ->
 		let a' = processLval up false a and
 		(b', _, _) = blockify up b in
@@ -186,7 +195,11 @@ let debug b =
 		Vcg.info g name (Format.sprintf "defs: %s\nscopein: %s\nscopeout: %s" (sdshow b.defs) (sdshow b.scopein) (sdshow b.scopeout));
 		List.iter (fun x -> ignore (doast name x)) b.ast;
 		List.iter (doblock name) b.sub;
-		List.iter (fun x -> Vcg.edge g name (Format.sprintf "G%d" x.bid)) b.next
+		List.iter (fun x -> Vcg.edge g name (Format.sprintf "G%d" x.bid)) b.next;
+		Vcg.color g name (match b.typ with
+		| BSeq -> ""
+		| BLet -> "lightred"
+		| BFix -> "lightgreen")
 	in doblock "" b;
 	Vcg.pp Format.std_formatter g
 
@@ -206,4 +219,5 @@ let analyse t =
 	let b = newblock BFix None in
 	let (t', _, _) = blockify b t in
 	propagate b;
+	debug b;
 	Astutil.walk fixnames t'

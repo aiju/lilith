@@ -2,6 +2,11 @@
 	open Ast
 	
 	let p = posed
+	
+	let deseq x =
+		match x.p with
+		| Seq l -> l
+		| _ -> [x]
 %}
 %token
 	TCOLON=":"
@@ -30,6 +35,9 @@
 	TDO="do"
 	TFOR="for"
 	TVAR="var"
+	TLET="let"
+	TIN="in"
+	TFIX="fix"
 	UMINUS
 
 %token <Symbol.t> TSYM
@@ -37,8 +45,8 @@
 
 %type <unit Ast.ast> program
 
-%unary "if"
-%unary "else"
+%unary "if" "let"
+%unary "else" "in"
 %right ":"
 %nonassoc "==" "!=" "<" "<=" ">" ">="
 %left "+" "-"
@@ -49,7 +57,7 @@
 
 program: sequence(stat(c,s)) { p _pos (Fix($1)) }
 
-sequence($X): $X { [$1] } | sequence($X) $X { $1 @ [$2] }
+sequence($X): { [] } | sequence($X) $X { $1 @ [$2] }
 optional($X):= { None } | $X { Some $1 }
 list($X): { [] } | list1($X) (| ",")
 list1($X): $X { [$1] } | list1($X) "," $X { $1 @ [$2] }
@@ -78,6 +86,9 @@ stat($x,$y):
 	| "while" "(" eseq(c) ")" stat($x,$y) {p _pos (While($1,$2))}
 	| "do" stat($x,$y) "while" "(" eseq(c) ")" {p _pos (DoWhile($1,$2))}
 	| "for" "(" stat(c,n) ";" stat(c, n) ";" stat(c,n) ")" stat($x, $y) { p _pos (For($1,$2,$3,$4)) }
+	| "let" stat($x,$y) {p _pos (Let($1,None))}
+	| "let" stat($x,$y) "in" stat($x,$y) {p _pos (Let($1, Some $2))}
+	| "fix" stat($x,$y) { p _pos (Fix(deseq $1)) }
 
 expr(c) := cexpr
 expr(n) := nexpr

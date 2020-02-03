@@ -58,6 +58,8 @@ let show t =
 		| For(a,b,c,d) ->
 			"for"^(show0 precStat a)^";"^(show0 precStat b)^";"^(show0 precStat b)^" "^(show0 (precComma+1) b)
 		| Lambda(a,b) -> parens (env > precComma) ((show0 precComma a)^" -> "^(show0 precComma b))
+		| Let(a,Some b) -> parens (env > precComma) ("let " ^ (show0 precComma a) ^ " in " ^ (show0 precComma b))
+		| Let(a,None) -> parens (env > precComma) ("let " ^ (show0 precComma a))
 	in show0 0 t
 
 let map (f: 'a ast -> 'b ast) t =
@@ -79,6 +81,7 @@ let map (f: 'a ast -> 'b ast) t =
 	| Array(l) -> Array(List.map f l)
 	| Index(a, b) -> Index(f a, List.map f b)
 	| Lambda(a, b) -> Lambda(f a, f b)
+	| Let(a, b) -> Let(f a, Util.optionMap f b)
 
 let fold (f: 'a ast -> 'b list -> 'b list) x t =
 	let f' a b = f b a in
@@ -100,6 +103,7 @@ let fold (f: 'a ast -> 'b list -> 'b list) x t =
 	| Array(l) -> List.fold_left f' x l
 	| Index(a, b) -> List.fold_left f' (f a x) b
 	| Lambda(a, b) -> x |> f a |> f b
+	| Let(a, b) -> Util.optionFold f (f a x) b
 
 let iter (f: 'a ast -> unit) t =
 	ignore (map (fun x -> f x; x) t)
