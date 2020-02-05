@@ -1,4 +1,5 @@
 open Ast
+open Type
 
 type assoc = Left | Right | Nonassoc
 
@@ -23,6 +24,18 @@ let opinfo o =
 	| OpDiv -> ("/", precMul, Left)
 	| OpMod -> ("%", precMul, Left)
 
+let rec typshow t =
+	match t with
+	| Unit -> "unit"
+	| Int -> "int"
+	| String -> "string"
+	| Type -> "type"
+	| Bool -> "bool"
+	| Tuple l -> "(" ^ (String.concat "," (List.map typshow l)) ^ ")"
+	| Array t -> "[" ^ (typshow t) ^ "]"
+	| Fun(a,b) -> "(" ^ (String.concat "," (List.map typshow a)) ^ ") -> " ^ (typshow b)
+	| TypeVar s -> Symbol.name s
+
 let show t =
 	let join sep l = match l with
 		| [] -> ""
@@ -32,6 +45,7 @@ let show t =
 		match t.p with
 		| Sym x -> Symbol.name x
 		| IntLit n -> string_of_int n
+		| TypeLit t' -> typshow t'
 		| Bin(o,a,b) ->
 			let (str, p, ass) = opinfo o in
 			let envl = if ass = Right then p else p + 1 in
@@ -66,6 +80,7 @@ let map (f: 'a ast -> 'b ast) t =
 	match t.p with
 	| Sym s -> Sym s
 	| IntLit n -> IntLit n
+	| TypeLit t' -> TypeLit t'
 	| Bin(o,a,b) -> Bin(o, f a, f b)
 	| Un(o,a) -> Un(o, f a)
 	| Assign(a,b) -> Assign(f a, f b)
@@ -88,6 +103,7 @@ let fold (f: 'a ast -> 'b list -> 'b list) x t =
 	match t.p with
 	| Sym _ -> x
 	| IntLit _ -> x
+	| TypeLit _ -> x
 	| Bin(o,a,b) -> x |> f a |> f b
 	| Un(o, a) -> x |> f a
 	| Assign(a, b) -> x |> f a |> f b

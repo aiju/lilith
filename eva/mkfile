@@ -3,6 +3,7 @@ OFILES=\
 	symbol.cmo\
 	lexer.cmo\
 	ast.cmo\
+	builtin.cmo\
 	astutil.cmo\
 	parse_gen.cmo\
 	graph.cmo\

@@ -93,13 +93,14 @@ let astname t =
 	| Index(a,b) -> "Index"
 	| Lambda(a,b) -> "Lambda"
 	| Let(a,b) -> "Let"
+	| TypeLit(t') -> "TypeLit "^(Astutil.typshow t')
 
-let astshow f t =
+let astshow f metaShow t =
 	let g = create () in
 	let idalloc = Util.idAllocator () in
 	let rec walk t =
 		let id = string_of_int (idalloc ()) in
-		node g id (astname t) "";
+		node g id ((astname t)^"\n"^(metaShow t)) "";
 		Astutil.iter (fun x -> edge g id (walk x)) t;
 		id
 	in ignore (walk t);

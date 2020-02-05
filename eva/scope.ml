@@ -67,6 +67,7 @@ let rec processLval up colon lhs  =
 		)else
 			node (Sym s)
 	| Un(OpVar, a) -> node (Un(OpVar, processLval up colon a))
+	| Tuple l -> node (Tuple(List.map (processLval up colon) l))
 	| _ -> Util.error(lhs.pos) ("invalid lval "^(Vcg.astname lhs))
 
 and blockify up t : meta ast * block list * block list =
@@ -137,6 +138,7 @@ and blockify up t : meta ast * block list * block list =
 	| Un(_, _)
 	| Sym _
 	| IntLit _
+	| TypeLit _
 	| Call(_, _)
 	| Index(_, _)
 	| Array(_)
@@ -217,7 +219,7 @@ let fixnames (p, pos, {block={scopein}; repl}) =
 
 let analyse t =
 	let b = newblock BFix None in
+	b.defs <- List.fold_left (fun l (a,_,_) -> Sd.add (a,a) l) Sd.empty Builtin.vars;
 	let (t', _, _) = blockify b t in
 	propagate b;
-	debug b;
 	Astutil.walk fixnames t'

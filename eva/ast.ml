@@ -1,5 +1,18 @@
 module H = Hashtbl
 
+module Type = struct
+type typ =
+	| Unit
+	| Int
+	| String
+	| Bool
+	| Type
+	| Tuple of typ list
+	| Array of typ
+	| Fun of typ list * typ
+	| TypeVar of Symbol.t
+end
+
 type binop =
 	| OpAdd
 	| OpSub
@@ -21,6 +34,7 @@ type pos = Lexing.position * Lexing.position
 type 'a ast_p =
 	| Sym of Symbol.t
 	| IntLit of int
+	| TypeLit of Type.typ
 	| Bin of binop * 'a ast * 'a ast
 	| Un of unop * 'a ast
 	| Assign of 'a ast * 'a ast
