@@ -29,7 +29,7 @@ rule token = parse
 	  	{ token lexbuf }
 	| '\n'	{ Lexing.new_line lexbuf ; token lexbuf }
 	| "/*"	{ comment lexbuf }
-	| (['A'-'Z' 'a'-'z' '\x80'-'\xff'] ['A'-'Z' 'a'-'z' '0'-'9' '_' '\x80'-'\xff']*) as s { kwfind s }
+	| (['A'-'Z' 'a'-'z' '_' '\x80'-'\xff'] ['A'-'Z' 'a'-'z' '0'-'9' '_' '\x80'-'\xff']*) as s { kwfind s }
 	| ['0'-'9']+ as s { TINTLIT(int_of_string(s)) }
 	| ':' { TCOLON } 
 	| "==" { TEQEQ }

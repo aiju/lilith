@@ -71,25 +71,25 @@ empty: { p _pos (Seq[]) }
 
 stat($x,s):
 	";" { p _pos (Seq[]) }
-	| expr($x) ";"
-	| expr($x) "=" stat($x,n) ";" { p _pos (Assign($1, $2)) }
-	| expr($x) "->" stat($x,n) ";" { p _pos (Lambda($1, $2)) }
-
-stat($x,n):
-	expr($x)
-	| expr($x) "=" stat($x,n) { p _pos (Assign($1, $2)) }
-	| expr($x) "->" stat($x,n) { p _pos (Lambda($1, $2)) }
 
 stat($x,$y):
-	 "if" "(" eseq(c) ")" stat($x,$y) {p _pos (If($1,$2,p _pos (Seq[])))}
-	| "if" "(" eseq(c) ")" stat($x,$y) "else" stat($x,$y) {p _pos (If($1,$2,$3))}
+	expr($x) semi($y)
+	| expr($x) "=" stat($x,n) semi($y) { p _pos (Assign($1, $2)) }
+	| expr($x) "->" stat($x,n) semi($y) { p _pos (Lambda($1, $2)) }
+	| "if" "(" eseq(c) ")" stat($x,$y) {p _pos (If($1,$2,p _pos (Seq[])))}
+	| "if" "(" eseq(c) ")" eitherstat($x,$y) "else" stat($x,$y) {p _pos (If($1,$2,$3))}
 	| "while" "(" eseq(c) ")" stat($x,$y) {p _pos (While($1,$2))}
-	| "do" stat($x,$y) "while" "(" eseq(c) ")" {p _pos (DoWhile($1,$2))}
+	| "do" eitherstat($x,$y) "while" "(" eseq(c) ")" semi($y) {p _pos (DoWhile($1,$2))}
 	| "for" "(" stat(c,n) ";" stat(c, n) ";" stat(c,n) ")" stat($x, $y) { p _pos (For($1,$2,$3,$4)) }
 	| "let" stat($x,$y) {p _pos (Let($1,None))}
 	| "let" stat($x,$y) "in" stat($x,$y) {p _pos (Let($1, Some $2))}
 	| "fix" stat($x,$y) { p _pos (Fix(deseq $1)) }
 
+eitherstat($x,s) := stat($x,n) | stat($x,s)
+eitherstat($x,n) := stat($x,n)
+	
+semi(s) := ";"
+semi(n) :=
 expr(c) := cexpr
 expr(n) := nexpr
 
@@ -123,4 +123,5 @@ primary:
 	| primary "(" list(eseq(n)) ")" { p _pos (Call($1, $2)) }
 	| primary "[" list(eseq(n)) "]" { p _pos (Index($1, $2)) }
 	| "(" eseq(c) ")"
+	| "(" ")" { p _pos (Seq[]) }
 	| "[" list(eseq(n)) "]" { p _pos (Array $1) }
