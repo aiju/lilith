@@ -1,4 +1,5 @@
-# Expressions and statements
+# The Eva programming language
+## Expressions and statements
 
 Expressions in Eva follow mostly standard C-like syntax
 
@@ -39,7 +40,7 @@ Anonymous or lambda functions use the syntax
 	x, y -> x + y
 ```
 
-# Assignments and definitions
+## Assignments and definitions
 
 Assignments take the form `lhs = rhs` and have the value `()`. The `lhs` can be a pattern:
 
@@ -64,15 +65,32 @@ Note that the second form is often written as `x := 23`, but care should be take
 
 This reassigns x and redefines y.
 
-# Scoping
+Functions are defined using the syntax
+
+```
+	foo(x, y) := x + y;
+```
+
+Definitions can be recursive and adjacent definitions can be mutually recursive:
+
+```
+	gcd(x, y) :=
+		if(y != 0) gcd(y, x % y)
+		else x;
+	
+	a() := b();
+	b() := a();
+```
+
+## Scoping
 
 Eva uses an unusual scoping scheme which I call "control-flow scoping". The basic rules are
 
-	1. A definition of `x` at point A is visible at point B if all paths from A lead to B without a redefinition of `x`.
-	2. `x` is legal to use if only one definition of `x` is visible.
-	3. A path is determined statically and every branch is assumed to be able to go either way.
-	4. Evaluation order within expression is undefined and all possible orders must be considered.
-	5. Functions use variables at the point of definition and not at the point of use.
+1. A definition of `x` at point A is visible at point B if all paths from A lead to B without a redefinition of `x`.
+2. `x` is legal to use if only one definition of `x` is visible.
+3. A path is determined statically and every branch is assumed to be able to go either way.
+4. Evaluation order within expression is undefined and all possible orders must be considered.
+5. Functions use variables at the point of definition and not at the point of use.
 
 The following examples are all legal:
 
