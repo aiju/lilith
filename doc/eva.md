@@ -305,6 +305,47 @@ length(Nil) := 0;
 length(Cons(_, rest)) := 1 + length(rest);
 ```
 
+### Generic types
+
+Generic types are defined using
+
+```
+list(t) := type enum (Nil, List(t, list(t)));
+```
+
+The type signature of `length` from the last section is then
+
+```
+length : gen(t) (list(t) -> int) = ?;
+```
+
+### Traits
+
+A trait specifies an abstract interface that can be satisfied by a type:
+
+```
+Show(t) := trait (
+	show : t -> string = ?;
+);
+Number(t) := trait (
+	(+) : t -> t -> t = ?;
+	(-) : t -> t -> t = ?;
+	(*) : t -> t -> t = ?;
+	(/) : t -> t -> t = ?;
+	(%) : t -> t -> t = ?;
+);
+```
+
+To implement a trait the syntax is
+
+```
+Show(Color).show t := case(t) (
+	Red => "Red"
+	Green => "Green"
+	Blue => "Blue"
+);
+```
+
 # Maybe Features
 ## Slices
 A slice allows a section of an array to be referenced.
